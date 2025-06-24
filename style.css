@@ -1,0 +1,392 @@
+:root {
+    --primary-bg-color: #121212;
+    --secondary-bg-color: #1e1e1e;
+    --tertiary-bg-color: #2c2c2c;
+    --primary-text-color: #e0e0e0;
+    --secondary-text-color: #a0a0a0;
+    --accent-color: #9c27b0; /* Purple */
+    --accent-hover-color: #7b1fa2; /* Darker Purple */
+    --border-color: #424242;
+    --card-back-color: #333333;
+    --card-face-bg-color: #2c2c2c; /* Dark card face */
+    --card-text-color: #e0e0e0;
+    --suit-red-color: #ff5252; /* Vibrant red for dark theme */
+    --suit-black-color: #e0e0e0; /* Light text for black suits on dark card */
+    --disabled-bg-color: #424242;
+    --disabled-text-color: #757575;
+    --shadow-color: rgba(156, 39, 176, 0.2); /* Subtle purple glow */
+    --selected-border-color: var(--accent-color);
+}
+
+body {
+    font-family: sans-serif;
+    display: flex;
+    justify-content: center;
+    align-items: flex-start; /* Align to top for long content */
+    min-height: 100vh;
+    background-color: var(--primary-bg-color);
+    color: var(--primary-text-color);
+    margin: 0;
+    padding: 20px;
+    box-sizing: border-box;
+}
+
+.game-container {
+    display: flex; /* Enable flexbox for sidebar layout */
+    background-color: var(--secondary-bg-color);
+    padding: 20px;
+    border-radius: 8px;
+    box-shadow: 0 0 15px var(--shadow-color);
+    width: 95%; /* Adjusted for potentially wider layout */
+    max-width: 1200px; /* Adjusted for potentially wider layout */
+}
+
+.sidebar {
+    width: 25%; /* Adjust as needed */
+    padding-right: 20px; /* Space between sidebar and main content */
+    display: flex;
+    flex-direction: column;
+    gap: 15px; /* Space between items in sidebar */
+}
+
+.main-content {
+    width: 75%; /* Adjust as needed */
+    display: flex;
+    flex-direction: column;
+}
+
+.current-hand-tricks-area,
+.player-area,
+.trick-area,
+.scoreboard,
+.overall-stats, /* Added overall-stats here */
+.previous-trick-log-area {
+    border: 1px solid var(--border-color);
+    padding: 10px;
+    border-radius: 5px;
+    background-color: var(--tertiary-bg-color);
+    width: 100%; /* Default to full width of their parent */
+    text-align: center;
+    margin-top: 0; /* Remove top margin, sidebar gap will handle spacing */
+}
+.scoreboard, .overall-stats {
+    margin-bottom: 0; /* Sidebar gap handles this */
+}
+.player-area { /* override width from above rule */
+     width: auto; /* Keep this for individual player areas if needed, but player-areas container is handled below */
+}
+
+
+.current-hand-tricks-area h3,
+.trick-area h3,
+.scoreboard h3,
+.previous-trick-log-area h3,
+.actions-area h3 {
+    margin-top: 0;
+    margin-bottom: 10px; /* Adjusted for spacing */
+    color: var(--primary-text-color);
+}
+
+.current-hand-tricks-area p {
+    margin: 3px 0;
+    font-size: 0.9em;
+    color: var(--secondary-text-color);
+}
+
+header {
+    text-align: center;
+    border-bottom: 1px solid var(--border-color);
+    margin-bottom: 20px;
+    padding-bottom: 10px;
+}
+
+header h1 {
+    margin: 0 0 10px 0;
+    color: var(--primary-text-color);
+}
+
+.game-info {
+    display: flex;
+    justify-content: space-around;
+    font-size: 0.9em;
+    color: var(--secondary-text-color);
+}
+
+.player-areas {
+    display: flex;
+    justify-content: space-between; /* This will space out opponents and table center */
+    margin-bottom: 20px;
+    align-items: flex-start; /* Align items to the top */
+    width: 100%; /* Take full width of main-content */
+}
+
+.opponent-area {
+    width: 25%; /* Adjusted: e.g. 25% for each opponent */
+    text-align: center;
+    background-color: var(--tertiary-bg-color);
+    border: 1px solid var(--border-color);
+}
+
+.opponent-area .hand .card {
+    background-color: var(--card-back-color);
+    border: 1px solid var(--border-color);
+    color: transparent; /* Hide numbers/suits on back */
+}
+.opponent-area .hand .card .rank, .opponent-area .hand .card .suit {
+    visibility: hidden; /* Hide text on card backs */
+}
+
+
+.human-player-area {
+    width: 100%; /* Takes full width below opponents */
+    text-align: center;
+    margin-top: 20px; /* Space it from the areas above */
+    background-color: var(--tertiary-bg-color); /* Ensure it has the tertiary background */
+    border: 1px solid var(--border-color); /* Ensure it has the border */
+}
+
+.table-center {
+    width: 45%; /* Adjusted: e.g. 45% for table center, leaves 5% for gaps if space-between */
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 15px;
+}
+.table-center .trick-area, .table-center .current-hand-tricks-area {
+    width: 100%; /* Make these take full width of table-center */
+}
+
+.hand {
+    display: flex;
+    flex-wrap: wrap; /* Allow cards to wrap */
+    justify-content: center;
+    gap: 5px; /* Space between cards */
+    min-height: 70px; /* Minimum height for hand area */
+}
+
+.card {
+    width: 60px;
+    height: 90px;
+    border: 1px solid var(--border-color);
+    border-radius: 5px;
+    display: flex;
+    flex-direction: column;
+    justify-content: space-between;
+    align-items: center;
+    padding: 5px;
+    background-color: var(--card-face-bg-color);
+    box-shadow: 1px 1px 3px rgba(0,0,0,0.5); /* Darker shadow for dark theme */
+    font-size: 0.7em;
+    cursor: pointer; /* Indicate cards are selectable */
+    background-size: cover; /* For card images */
+    background-position: center;
+    color: var(--card-text-color); /* Default text color for card text */
+}
+
+.card.selected {
+    border: 2px solid var(--selected-border-color);
+    transform: scale(1.05);
+    box-shadow: 0 0 8px var(--selected-border-color);
+}
+
+.card.played-in-trick {
+    margin: 0 5px; /* Spacing for cards in trick area */
+}
+
+/* Specific styling for text on cards */
+.card .rank, .card .suit {
+    font-weight: bold;
+    text-shadow: none; /* Remove white text shadow, not needed for light text on dark bg */
+}
+.card .suit {
+    font-size: 1.5em;
+}
+.suit-Hearts, .suit-Diamonds { color: var(--suit-red-color); }
+.suit-Clubs, .suit-Spades { color: var(--suit-black-color); }
+
+
+.actions-area {
+    border-top: 1px solid var(--border-color);
+    padding-top: 15px;
+    margin-top: 20px;
+    text-align: center;
+}
+
+.actions-area button {
+    padding: 10px 15px;
+    margin: 5px;
+    border: none;
+    border-radius: 5px;
+    background-color: var(--accent-color);
+    color: white; /* Keep button text white for contrast */
+    cursor: pointer;
+    font-size: 1em;
+}
+
+.actions-area button:hover {
+    background-color: var(--accent-hover-color);
+}
+
+.actions-area button:disabled {
+    background-color: var(--disabled-bg-color);
+    color: var(--disabled-text-color);
+    cursor: not-allowed;
+}
+
+/* Keep specific button colors if desired, or unify them under accent */
+#call-trump-actions button {
+    /* Using accent color for consistency, but could be different if needed */
+    background-color: var(--accent-color); /* Example: #4CAF50 for a green */
+}
+#call-trump-actions button:hover {
+    background-color: var(--accent-hover-color); /* Example: #388E3C for darker green */
+}
+
+.messages-area {
+    border-top: 1px solid var(--border-color);
+    padding-top: 15px;
+    margin-top: 20px;
+    text-align: center;
+    font-style: italic;
+    color: var(--secondary-text-color);
+}
+
+/* Card image styling - if card images are used, ensure they are suitable for dark mode */
+.card-image {
+    width: 100%;
+    height: 100%;
+    /* Consider filter: brightness(0.8) contrast(1.2); if images are too bright */
+}
+
+/* Hidden by default */
+#call-trump-actions, #play-actions, #go-alone-actions { /* Renamed from #go-alone-button to #go-alone-actions for clarity if it's a div */
+    display: none;
+}
+
+/* Styles for Maker Indicator */
+.player-area-maker h2 {
+    font-weight: bold;
+    color: var(--accent-color); /* Highlight color for the maker's title */
+}
+
+.maker-text-indicator {
+    font-weight: normal;
+    font-style: italic;
+    color: var(--accent-color); /* Using accent color for maker text as well */
+    margin-left: 8px; /* Space from player name */
+}
+
+/* Styles for Trick Area */
+.trick-card-container {
+    display: inline-flex; /* Align player name and card inline */
+    align-items: center;
+    margin: 2px 5px; /* Spacing around each card entry in the trick */
+    padding: 3px;
+    border: 1px solid var(--border-color);
+    border-radius: 3px;
+    background-color: var(--secondary-bg-color); /* Slightly different from card bg for contrast */
+}
+
+.trick-player-identifier {
+    margin-right: 5px;
+    font-size: 0.85em; /* Smaller text for player id */
+    color: var(--secondary-text-color);
+}
+
+/* Ensure cards in trick area are not overly large and don't have click effects like hand cards */
+.trick-area .card {
+    width: 50px; /* Slightly smaller than hand cards */
+    height: 75px;
+    cursor: default; /* Not clickable */
+    box-shadow: none; /* Simpler look */
+    background-color: var(--card-face-bg-color); /* Ensure trick cards also use dark face */
+    color: var(--card-text-color);
+}
+.trick-area .card.selected { /* Override selection style if it ever gets applied */
+    border: 1px solid var(--border-color);
+    transform: none;
+    box-shadow: none;
+}
+
+.animated-card {
+    border: 1px solid var(--border-color);
+    background-color: var(--card-face-bg-color);
+    box-shadow: 3px 3px 7px rgba(0,0,0,0.5); /* Darker shadow */
+    color: var(--card-text-color); /* Ensure text is visible if it's a direct clone */
+}
+/* Ensure animated card suits are correct if they don't inherit properly */
+.animated-card .suit-Hearts, .animated-card .suit-Diamonds { color: var(--suit-red-color); }
+.animated-card .suit-Clubs, .animated-card .suit-Spades { color: var(--suit-black-color); }
+
+
+#previous-trick-log .trick-entry {
+    padding: 8px;
+    border-bottom: 1px solid var(--border-color);
+    font-size: 0.9em;
+    color: var(--secondary-text-color);
+}
+#previous-trick-log .trick-entry:last-child {
+    border-bottom: none;
+}
+#previous-trick-log .played-card-info {
+    margin-left: 10px;
+}
+#previous-trick-log .trick-winner-info {
+    font-weight: bold;
+    margin-top: 5px;
+    color: var(--primary-text-color);
+}
+
+/* Ensure h2 text color is correct */
+h2 {
+    color: var(--primary-text-color);
+}
+.player-area h2 { /* Specificity for player area titles */
+    color: var(--primary-text-color);
+}
+
+/* Scoreboard, Stats, Game Info text color */
+.scoreboard p, .overall-stats p, .current-hand-tricks-area p, .game-info p {
+    color: var(--secondary-text-color); /* Labels */
+}
+.scoreboard span, .overall-stats span, .current-hand-tricks-area span, .game-info span {
+    color: var(--primary-text-color); /* Values: scores, trump suit, up-card etc. */
+}
+
+/* Game messages specific color */
+#game-message {
+    color: var(--primary-text-color);
+}
+
+/* Responsive adjustments */
+@media (max-width: 768px) { /* Adjust breakpoint as needed */
+    .game-container {
+        flex-direction: column;
+        align-items: center; /* Center items when stacked */
+        width: 95%;
+        max-width: none; /* Allow it to use the screen width */
+    }
+
+    .sidebar, .main-content {
+        width: 100%; /* Full width for stacked layout */
+        padding-right: 0; /* Remove sidebar padding */
+        margin-bottom: 20px; /* Add space between stacked sidebar and main content */
+    }
+
+    .main-content {
+        margin-bottom: 0; /* No margin at the very bottom */
+    }
+
+    .player-areas {
+        flex-direction: column; /* Stack player areas */
+        align-items: center; /* Center them */
+    }
+
+    .opponent-area, .table-center {
+        width: 90%; /* Adjust width for stacked layout */
+        margin-bottom: 15px; /* Space between stacked elements */
+    }
+    .human-player-area {
+        width: 90%; /* Match other areas in stacked view */
+    }
+}

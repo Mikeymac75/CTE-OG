@@ -1,0 +1,109 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>3-Player Euchre</title>
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <div class="game-container">
+        <div class="sidebar">
+            <div class="scoreboard">
+                <h3>Score</h3>
+                <p>Player 1 (You): <span id="score-player-1">0</span></p>
+                <p>Player 2: <span id="score-player-2">0</span></p>
+                <p>Player 3: <span id="score-player-3">0</span></p>
+            </div>
+            <div class="overall-stats">
+                <h3>Overall Stats</h3>
+                <p>Wins: <span id="stats-wins">0</span></p>
+                <p>Losses: <span id="stats-losses">0</span></p>
+            </div>
+        </div>
+        <div class="main-content">
+            <header>
+                <h1>3-Player Euchre</h1>
+                <div class="game-info">
+                    <p>Trump: <span id="trump-suit">None</span></p>
+                    <p>Up-card: <span id="up-card-display">None</span></p>
+                    <p>Dummy Hand: <span id="dummy-hand-display"></span></p> <!-- Changed Kitty to Dummy Hand -->
+                </div>
+            </header>
+
+            <div class="player-areas">
+                <div id="player-2" class="player-area opponent-area">
+                    <h2>Player 2 (Opponent)</h2>
+                    <div class="hand" id="player-2-hand">
+                        <!-- Cards will be added here by JS -->
+                    </div>
+                </div>
+
+                <div class="table-center">
+                    <div class="trick-area" id="trick-area">
+                        <h3>Current Trick</h3>
+                        <!-- Played cards will appear here -->
+                    </div>
+                    <div class="current-hand-tricks-area" id="current-hand-tricks-area">
+                        <h3>Tricks This Hand</h3>
+                        <p>Player 1 (You): <span id="player-1-hand-tricks">0</span></p>
+                        <p>Player 2: <span id="player-2-hand-tricks">0</span></p>
+                        <p>Player 3: <span id="player-3-hand-tricks">0</span></p>
+                    </div>
+                </div>
+
+                <div id="player-3" class="player-area opponent-area">
+                    <h2>Player 3 (Opponent)</h2>
+                    <div class="hand" id="player-3-hand">
+                        <!-- Cards will be added here by JS -->
+                    </div>
+                </div>
+            </div>
+
+            <div id="player-1" class="player-area human-player-area">
+                <h2>Player 1 (You)</h2>
+                <div class="hand" id="player-1-hand">
+                    <!-- Your cards will be added here by JS -->
+                </div>
+            </div>
+
+            <div class="actions-area">
+                <h3>Your Actions</h3>
+                <div id="bidding-actions">
+                    <button id="order-up-button">Order Up</button>
+                    <button id="pass-bid-button">Pass</button>
+                    <div id="call-trump-actions" style="display: none;">
+                        <button class="call-suit-button" data-suit="Hearts">Call Hearts</button>
+                        <button class="call-suit-button" data-suit="Diamonds">Call Diamonds</button>
+                        <button class="call-suit-button" data-suit="Clubs">Call Clubs</button>
+                        <button class="call-suit-button" data-suit="Spades">Call Spades</button>
+                        <button id="pass-call-button">Pass</button>
+                    </div>
+                </div>
+                <div id="play-actions" style="display: none;">
+                    <button id="play-card-button">Play Selected Card</button> <!-- Also used for Discard -->
+                </div>
+                <div id="go-alone-actions" style="display: none;">
+                    <p>Do you want to go alone?</p>
+                    <button id="choose-go-alone-button">Go Alone</button>
+                    <button id="choose-not-go-alone-button">Play with Dummy Hand</button>
+                </div>
+            </div>
+
+            <div class="messages-area">
+                <h3>Game Messages</h3>
+                <p id="game-message">Welcome to Euchre! Waiting for game to start...</p>
+            </div>
+
+            <div class="previous-trick-log-area">
+                <h3>Previous Trick Log</h3>
+                <div id="previous-trick-log">
+                    <p>No tricks completed yet.</p>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script src="script.js"></script>
+</body>
+</html>
