@@ -125,7 +125,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
     function updateSelectedCardsDisplay() {
         // Visually indicate how many cards are selected vs needed for discard
-        if ((clientGameState.game_phase === 'maker_discard' || clientGameState.game_phase === 'maker_discard_one') &&
+        if ((clientGameState.game_phase === 'maker_discard' || clientGameState.game_phase === 'dealer_discard_one') &&
             clientGameState.current_player_turn === 0 && clientGameState.maker === 0) {
             const needed = clientGameState.cards_to_discard_count; // Should be 1 for discard_one, 5 for discard
             const selectedCount = selectedCardsForDiscard.length;
