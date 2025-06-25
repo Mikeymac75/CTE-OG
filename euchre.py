@@ -184,31 +184,203 @@ def process_ai_play_card(ai_player_idx):
         if can_follow_lead_suit_cards:
             can_follow_lead_suit_cards.sort(key=lambda c: get_card_value(c, trump_suit), reverse=True); card_to_play = can_follow_lead_suit_cards[0]
             logging.info(f"AI P{ai_player_idx} following suit {lead_suit}, playing highest valid: {str(card_to_play)}")
-        elif cannot_follow_lead_suit_cards:
-            trump_cards_in_hand = [c for c in cannot_follow_lead_suit_cards if get_effective_suit(c, trump_suit) == trump_suit]
-            non_trump_off_suit_cards = [c for c in cannot_follow_lead_suit_cards if get_effective_suit(c, trump_suit) != trump_suit]
-            if trump_cards_in_hand:
-                trump_cards_in_hand.sort(key=lambda c: get_card_value(c, trump_suit)); card_to_play = trump_cards_in_hand[0]
-                logging.info(f"AI P{ai_player_idx} cannot follow suit {lead_suit}, playing lowest trump: {str(card_to_play)}")
-            elif non_trump_off_suit_cards:
-                non_trump_off_suit_cards.sort(key=lambda c: get_card_value(c, trump_suit)); card_to_play = non_trump_off_suit_cards[0]
-                logging.info(f"AI P{ai_player_idx} cannot follow suit {lead_suit}, no trump, sloughing lowest: {str(card_to_play)}")
-            else: logging.error(f"AI P{ai_player_idx} in following logic, but no card selected. Valid: {[str(c) for c in valid_cards]}. Fallback to random valid."); card_to_play = random.choice(valid_cards) if valid_cards else None
-    if not card_to_play and valid_cards: logging.warning(f"AI P{ai_player_idx} card selection logic failed. Defaulting to random."); card_to_play = random.choice(valid_cards)
-    elif not card_to_play and not valid_cards: logging.error(f"AI P{ai_player_idx} has no valid cards and no card_to_play."); return
+        # --- Start of new collaborative AI logic ---
+        maker = game_data.get("maker")
+        is_ai_non_maker = maker is not None and ai_player_idx != maker
+        partner_idx = -1
+        if is_ai_non_maker:
+            for i in range(game_data["num_players"]):
+                if i != ai_player_idx and i != maker:
+                    partner_idx = i
+                    break
+
+        current_trick_plays = game_data.get("trick_cards", [])
+        # Ensure lead_suit for determining winner so far is correctly identified
+        # If current_trick_plays is empty, lead_suit here will be None, which is fine for determine_trick_winner_so_far
+        # If current_trick_plays is not empty, game_data["current_trick_lead_suit"] should be set by the first player.
+        effective_lead_suit_for_eval = game_data["current_trick_lead_suit"]
+        if not effective_lead_suit_for_eval and current_trick_plays: # Should ideally not happen if logic is correct elsewhere
+            effective_lead_suit_for_eval = get_effective_suit(current_trick_plays[0]['card'], trump_suit)
+            logging.warning(f"AI P{ai_player_idx}: current_trick_lead_suit was not set, derived {effective_lead_suit_for_eval} from first card in trick_cards.")
+
+
+        if is_ai_non_maker and partner_idx != -1 and current_trick_plays: # Only apply collaborative logic if cards already played in trick
+            current_winner_info = determine_trick_winner_so_far(current_trick_plays, trump_suit, effective_lead_suit_for_eval)
+            partner_is_winning = current_winner_info and current_winner_info['player'] == partner_idx
+
+            if partner_is_winning:
+                logging.info(f"AI P{ai_player_idx} (Non-Maker): Partner P{partner_idx} is currently winning trick with {str(current_winner_info['card'])}.")
+                maker_yet_to_play = maker is not None and maker not in [p['player'] for p in current_trick_plays]
+                maker_can_beat_partner = False # Default to false
+                if maker_yet_to_play:
+                    # Use the new prediction function
+                    maker_can_beat_partner = predict_maker_can_beat_card(
+                        maker,
+                        current_winner_info['card'],
+                        trump_suit,
+                        effective_lead_suit_for_eval,
+                        game_data # Pass a copy or be careful if it modifies game_data
+                                  # For now, predict_maker_can_beat_card reads game_data["hands"][maker_idx] for size
+                                  # and game_data["last_completed_trick"], game_data["trick_cards"]
+                                  # This should be safe as it's for prediction within the current game state.
+                    )
+                    logging.info(f"AI P{ai_player_idx}: Prediction: Maker (P{maker}) can beat partner's card ({str(current_winner_info['card'])}): {maker_can_beat_partner}")
+                else:
+                    logging.info(f"AI P{ai_player_idx}: Maker (P{maker}) has already played or is not in game.")
+
+                if not maker_can_beat_partner: # If maker already played or prediction is false
+                    logging.info(f"AI P{ai_player_idx}: Partner P{partner_idx} winning, maker unlikely/unable to beat. Playing low.")
+                    # Play lowest possible valid card.
+                    # Sort valid_cards from low to high value.
+                    valid_cards.sort(key=lambda c: get_card_value(c, trump_suit, lead_suit)) # Use lead_suit for context if following
+                    card_to_play = valid_cards[0]
+                    logging.info(f"AI P{ai_player_idx} playing lowest valid card: {str(card_to_play)}")
+                else: # Partner is winning, but maker might beat them. AI should try to win if it can beat partner AND maker.
+                    logging.info(f"AI P{ai_player_idx}: Partner P{partner_idx} winning, but maker might beat. AI will try to win if it's strong enough.")
+                    # Play highest card that can beat partner's card.
+                    partner_card_value = get_card_value(current_winner_info['card'], trump_suit, effective_lead_suit_for_eval)
+                    potential_plays = [c for c in valid_cards if get_card_value(c, trump_suit, effective_lead_suit_for_eval) > partner_card_value]
+                    if potential_plays:
+                        potential_plays.sort(key=lambda c: get_card_value(c, trump_suit, effective_lead_suit_for_eval), reverse=True)
+                        card_to_play = potential_plays[0] # Play highest of these
+                        logging.info(f"AI P{ai_player_idx} playing to win over partner (and hopefully maker): {str(card_to_play)}")
+                    else: # Cannot beat partner, or no better card. Play lowest to not interfere badly.
+                        valid_cards.sort(key=lambda c: get_card_value(c, trump_suit, lead_suit))
+                        card_to_play = valid_cards[0]
+                        logging.info(f"AI P{ai_player_idx} cannot beat partner (or no better card), playing lowest valid: {str(card_to_play)}")
+            else: # Partner is not winning (or AI is not non-maker/no partner/no plays yet) -> standard logic
+                logging.info(f"AI P{ai_player_idx}: Standard play logic. Partner winning: {partner_is_winning}, is_ai_non_maker: {is_ai_non_maker}, partner_idx: {partner_idx}")
+                # Fallthrough to original logic below this new block
+                card_to_play = None # Reset card_to_play to trigger original logic path
+        else: # AI is leading, or AI is maker, or no partner context for this play.
+             logging.info(f"AI P{ai_player_idx}: Standard play logic (leading, or maker, or no current partner context).")
+             card_to_play = None # Reset card_to_play to trigger original logic path
+
+    # Original AI logic (or fallback if new logic doesn't select a card)
+    if card_to_play is None:
+        if not lead_suit: # Leading the trick
+            valid_cards.sort(key=lambda c: get_card_value(c, trump_suit), reverse=True); card_to_play = valid_cards[0]
+            logging.info(f"AI P{ai_player_idx} (std logic) leading trick, playing highest value card: {str(card_to_play)}")
+        else: # Following
+            can_follow_lead_suit_cards = [c for c in valid_cards if get_effective_suit(c, trump_suit) == lead_suit]
+            cannot_follow_lead_suit_cards = [c for c in valid_cards if get_effective_suit(c, trump_suit) != lead_suit]
+
+            current_winner_info_std = determine_trick_winner_so_far(current_trick_plays, trump_suit, effective_lead_suit_for_eval)
+            maker_is_winning_trick = maker is not None and current_winner_info_std and current_winner_info_std['player'] == maker
+
+            if can_follow_lead_suit_cards:
+                if is_ai_non_maker and maker_is_winning_trick:
+                    maker_card_value = get_card_value(current_winner_info_std['card'], trump_suit, effective_lead_suit_for_eval)
+                    cards_that_beat_maker = [c for c in can_follow_lead_suit_cards if get_card_value(c, trump_suit, effective_lead_suit_for_eval) > maker_card_value]
+                    if cards_that_beat_maker:
+                        cards_that_beat_maker.sort(key=lambda c: get_card_value(c, trump_suit, effective_lead_suit_for_eval)) # Lowest that beats maker
+                        card_to_play = cards_that_beat_maker[0]
+                        logging.info(f"AI P{ai_player_idx} (std logic, non-maker) beating Maker's {str(current_winner_info_std['card'])} with {str(card_to_play)}.")
+                    else: # Cannot beat maker, play lowest
+                        can_follow_lead_suit_cards.sort(key=lambda c: get_card_value(c, trump_suit, effective_lead_suit_for_eval))
+                        card_to_play = can_follow_lead_suit_cards[0]
+                        logging.info(f"AI P{ai_player_idx} (std logic, non-maker) cannot beat Maker, playing lowest in suit: {str(card_to_play)}.")
+                else: # Play highest in suit (original general approach)
+                    can_follow_lead_suit_cards.sort(key=lambda c: get_card_value(c, trump_suit, effective_lead_suit_for_eval), reverse=True)
+                    card_to_play = can_follow_lead_suit_cards[0]
+                    logging.info(f"AI P{ai_player_idx} (std logic) following suit {lead_suit}, playing highest valid: {str(card_to_play)}")
+
+            elif cannot_follow_lead_suit_cards: # Cannot follow suit
+                trump_cards = [c for c in cannot_follow_lead_suit_cards if get_effective_suit(c, trump_suit) == trump_suit]
+                non_trump_sloughs = [c for c in cannot_follow_lead_suit_cards if get_effective_suit(c, trump_suit) != trump_suit]
+
+                if is_ai_non_maker and maker_is_winning_trick:
+                    maker_card_value = get_card_value(current_winner_info_std['card'], trump_suit, effective_lead_suit_for_eval)
+                    maker_card_is_trump = get_effective_suit(current_winner_info_std['card'], trump_suit) == trump_suit
+
+                    trumps_that_beat_maker = []
+                    if trump_cards:
+                        if maker_card_is_trump:
+                            trumps_that_beat_maker = [c for c in trump_cards if get_card_value(c, trump_suit, effective_lead_suit_for_eval) > maker_card_value]
+                        else: # Maker played non-trump, any of our trump beats it
+                            trumps_that_beat_maker = list(trump_cards)
+
+                    if trumps_that_beat_maker:
+                        trumps_that_beat_maker.sort(key=lambda c: get_card_value(c, trump_suit, effective_lead_suit_for_eval)) # Smallest trump that beats maker
+                        card_to_play = trumps_that_beat_maker[0]
+                        logging.info(f"AI P{ai_player_idx} (std logic, non-maker) trumping to beat Maker's {str(current_winner_info_std['card'])} with {str(card_to_play)}.")
+                    else: # Cannot beat maker with trump (or no trump), slough lowest
+                        if non_trump_sloughs:
+                            non_trump_sloughs.sort(key=lambda c: get_card_value(c, trump_suit, effective_lead_suit_for_eval))
+                            card_to_play = non_trump_sloughs[0]
+                            logging.info(f"AI P{ai_player_idx} (std logic, non-maker) cannot beat Maker's trump or no trump, sloughing {str(card_to_play)}.")
+                        elif trump_cards: # Must play trump, but it won't beat maker. Play lowest trump.
+                            trump_cards.sort(key=lambda c: get_card_value(c, trump_suit, effective_lead_suit_for_eval))
+                            card_to_play = trump_cards[0]
+                            logging.info(f"AI P{ai_player_idx} (std logic, non-maker) cannot beat Maker's trump, forced to play lowest trump {str(card_to_play)}.")
+                        else: # Should not happen
+                            card_to_play = random.choice(valid_cards) if valid_cards else None
+                else: # Standard: play lowest trump if available, else lowest slough
+                    if trump_cards:
+                        trump_cards.sort(key=lambda c: get_card_value(c, trump_suit, effective_lead_suit_for_eval))
+                        card_to_play = trump_cards[0]
+                        logging.info(f"AI P{ai_player_idx} (std logic) cannot follow suit {lead_suit}, playing lowest trump: {str(card_to_play)}")
+                    elif non_trump_sloughs:
+                        non_trump_sloughs.sort(key=lambda c: get_card_value(c, trump_suit, effective_lead_suit_for_eval))
+                        card_to_play = non_trump_sloughs[0]
+                        logging.info(f"AI P{ai_player_idx} (std logic) cannot follow suit {lead_suit}, no trump, sloughing lowest: {str(card_to_play)}")
+                    else: # Should not happen if valid_cards is not empty
+                        logging.error(f"AI P{ai_player_idx} (std logic) in following logic, but no card selected. Valid: {[str(c) for c in valid_cards]}. Fallback to random valid.");
+                        card_to_play = random.choice(valid_cards) if valid_cards else None
+    # --- End of new/standard AI logic ---
+
+    if not card_to_play and valid_cards:
+        logging.warning(f"AI P{ai_player_idx} card selection logic completely failed or resulted in no card. Defaulting to first valid. Valid: {[str(c) for c in valid_cards]}")
+        card_to_play = valid_cards[0] # Default to first valid card if all else fails
+    elif not card_to_play and not valid_cards:
+        logging.error(f"AI P{ai_player_idx} has no valid cards and no card_to_play selected by logic. This should have been caught earlier."); return
+
     actual_card_to_remove_from_hand = next((c for c in ai_hand if c.suit == card_to_play.suit and c.rank == card_to_play.rank), None)
     if not actual_card_to_remove_from_hand:
-        logging.error(f"AI P{ai_player_idx} tried to play {str(card_to_play)} but not in hand: {[str(c) for c in ai_hand]}. Playing first valid.")
-        if valid_cards: card_to_play = valid_cards[0]; actual_card_to_remove_from_hand = next((c for c in ai_hand if c.suit == card_to_play.suit and c.rank == card_to_play.rank), None)
-        else: return
-    if actual_card_to_remove_from_hand: ai_hand.remove(actual_card_to_remove_from_hand)
-    else: logging.error(f"CRITICAL: AI P{ai_player_idx} could not find card to play. Hand: {[str(c) for c in ai_hand]}"); return
-    game_data["trick_cards"].append({'player': ai_player_idx, 'card': card_to_play})
+        # This can happen if card_to_play is from valid_cards (a copy) and not the original hand object.
+        # Find the equivalent card in hand.
+        logging.warning(f"AI P{ai_player_idx} couldn't find exact object {str(card_to_play)}. Searching by val in hand: {[str(c) for c in ai_hand]}.")
+        # Re-select from valid_cards to ensure it's an object that *could* be in hand if logic was perfect.
+        # Then find that card in the actual hand.
+        target_card_val = card_to_play # Keep the properties of the chosen card.
+        card_to_play = next((h_card for h_card in ai_hand if h_card.suit == target_card_val.suit and h_card.rank == target_card_val.rank), None)
+        if card_to_play: # Found it by value in hand.
+            actual_card_to_remove_from_hand = card_to_play
+            logging.info(f"Found card {str(actual_card_to_remove_from_hand)} by value in hand.")
+        else: # Still not found, this is a bigger issue.
+            logging.error(f"AI P{ai_player_idx} CRITICALLY tried to play {str(target_card_val)} but not found in hand by value: {[str(c) for c in ai_hand]}. Playing first valid from list as last resort.")
+            if valid_cards:
+                card_to_play = valid_cards[0]
+                actual_card_to_remove_from_hand = next((c for c in ai_hand if c.suit == card_to_play.suit and c.rank == card_to_play.rank), None)
+                if not actual_card_to_remove_from_hand: # If even the first valid card isn't in hand, something is deeply wrong
+                    logging.error(f"CRITICAL: First valid card {str(card_to_play)} also not in hand. Aborting AI play for P{ai_player_idx}.")
+                    return
+            else: # No valid cards, already handled, but as a safeguard:
+                logging.error(f"CRITICAL: No valid cards and logic failed to find card in hand for P{ai_player_idx}.")
+                return
+
+    if actual_card_to_remove_from_hand:
+        try:
+            ai_hand.remove(actual_card_to_remove_from_hand)
+            logging.info(f"AI P{ai_player_idx} successfully removed {str(actual_card_to_remove_from_hand)} from hand.")
+        except ValueError:
+            logging.error(f"CRITICAL: Failed to remove {str(actual_card_to_remove_from_hand)} from AI P{ai_player_idx}'s hand. Hand: {[str(c) for c in ai_hand]}")
+            return # Avoid proceeding with inconsistent state
+    else: # Should be caught by earlier checks, but as a final safeguard
+        logging.error(f"CRITICAL: AI P{ai_player_idx} somehow has no actual_card_to_remove_from_hand. Chosen: {str(card_to_play)}. Hand: {[str(c) for c in ai_hand]}"); return
+
+    game_data["trick_cards"].append({'player': ai_player_idx, 'card': card_to_play}) # Use the card object that was chosen and confirmed in hand
     game_data["message"] = f"{game_data['player_identities'][ai_player_idx]} (AI) played {str(card_to_play)}."
-    if not game_data["current_trick_lead_suit"]: game_data["current_trick_lead_suit"] = get_effective_suit(card_to_play, game_data["trump_suit"])
+
+    # Set current_trick_lead_suit if it's not set (i.e., this is the first card of the trick)
+    if not game_data["current_trick_lead_suit"]:
+        game_data["current_trick_lead_suit"] = get_effective_suit(card_to_play, game_data["trump_suit"])
+        logging.info(f"AI P{ai_player_idx} (as first player in trick) set lead suit to {game_data['current_trick_lead_suit']} with card {str(card_to_play)}")
+
     num_players_in_trick = len(game_data["trick_cards"]); expected_cards_in_trick = game_data["num_players"]
     if num_players_in_trick == expected_cards_in_trick:
-        winner_idx = determine_trick_winner(game_data["trick_cards"], game_data["trump_suit"])
+        # Pass the now definitive lead suit for the trick
+        winner_idx = determine_trick_winner(game_data["trick_cards"], game_data["trump_suit"], game_data["current_trick_lead_suit"])
         game_data["round_tricks_won"][winner_idx] += 1
         game_data["last_completed_trick"] = {"played_cards": [tc.copy() for tc in game_data["trick_cards"]], "winner_player_idx": winner_idx, "winner_name": game_data['player_identities'][winner_idx]}
         logging.info(f"Trick completed. Winner: P{winner_idx}. Storing last_completed_trick: {game_data['last_completed_trick']}")
@@ -226,13 +398,155 @@ def get_valid_plays(hand, lead_suit, trump_suit):
     if can_follow_suit: return [card for card in hand if get_effective_suit(card, trump_suit) == lead_suit]
     else: return list(hand)
 
-def determine_trick_winner(trick_cards_played, trump_suit):
+# Helper to determine current winner of a potentially incomplete trick
+def determine_trick_winner_so_far(trick_cards_played, trump_suit, lead_suit_of_trick):
+    if not trick_cards_played: return None # Return None instead of -1 for "no winner yet" / "no cards played"
+
+    winning_player_idx = -1
+    highest_value_card_obj = None
+
+    # The lead_suit_of_trick is passed in, as game_data["current_trick_lead_suit"] might not be set if the first player hasn't finished playing.
+    # If lead_suit_of_trick is None (e.g. first card of trick being considered), then the first card played sets it.
+    actual_lead_suit_for_evaluation = lead_suit_of_trick
+    if not actual_lead_suit_for_evaluation and trick_cards_played:
+        actual_lead_suit_for_evaluation = get_effective_suit(trick_cards_played[0]['card'], trump_suit)
+
+    for play in trick_cards_played:
+        current_player = play['player']
+        current_card = play['card']
+        current_card_effective_suit = get_effective_suit(current_card, trump_suit)
+        current_card_value = get_card_value(current_card, trump_suit, actual_lead_suit_for_evaluation) # Pass lead suit for context
+
+        if highest_value_card_obj is None:
+            highest_value_card_obj = current_card
+            winning_player_idx = current_player
+        else:
+            highest_value_card_effective_suit = get_effective_suit(highest_value_card_obj, trump_suit)
+            highest_value_card_value_for_comparison = get_card_value(highest_value_card_obj, trump_suit, actual_lead_suit_for_evaluation)
+
+            is_current_card_trump = (current_card_effective_suit == trump_suit)
+            is_highest_card_trump = (highest_value_card_effective_suit == trump_suit)
+
+            if is_current_card_trump and not is_highest_card_trump:
+                highest_value_card_obj = current_card
+                winning_player_idx = current_player
+            elif is_current_card_trump and is_highest_card_trump:
+                if current_card_value > highest_value_card_value_for_comparison:
+                    highest_value_card_obj = current_card
+                    winning_player_idx = current_player
+            elif not is_current_card_trump and not is_highest_card_trump: # Neither are trump
+                if current_card_effective_suit == actual_lead_suit_for_evaluation and highest_value_card_effective_suit != actual_lead_suit_for_evaluation:
+                    # Current card followed lead, previous high did not (e.g. sloughed off-suit)
+                    highest_value_card_obj = current_card
+                    winning_player_idx = current_player
+                elif current_card_effective_suit == actual_lead_suit_for_evaluation and highest_value_card_effective_suit == actual_lead_suit_for_evaluation:
+                    # Both followed lead suit
+                    if current_card_value > highest_value_card_value_for_comparison:
+                        highest_value_card_obj = current_card
+                        winning_player_idx = current_player
+                # If current card is off-suit and highest is on lead suit, current does not win
+                # If both are off-suit and not lead, neither wins over a lead-suit card (handled by initial lead_suit_of_trick check)
+
+    if winning_player_idx != -1:
+        return {'player': winning_player_idx, 'card': highest_value_card_obj}
+    return None
+
+def determine_trick_winner(trick_cards_played, trump_suit, lead_suit_of_trick=None): # Added lead_suit_of_trick parameter
+    if not trick_cards_played: return -1 # Keep -1 for final determination if something went wrong
+
+    # If lead_suit_of_trick is not provided, determine it from the first card.
+    # This maintains compatibility with old calls but allows override for clarity.
+    if lead_suit_of_trick is None:
+        if not trick_cards_played: return -1 # Should not happen if called after cards are played.
+        lead_card_obj = trick_cards_played[0]['card']
+        lead_suit_of_trick = get_effective_suit(lead_card_obj, trump_suit)
+
+    winner_info = determine_trick_winner_so_far(trick_cards_played, trump_suit, lead_suit_of_trick)
+    return winner_info['player'] if winner_info else -1
+
+def predict_maker_can_beat_card(maker_idx, target_card_to_beat, trump_suit, current_lead_suit, game_data_copy):
+    """
+    Predicts if the maker is likely to beat a specific target_card.
+    This is a heuristic based on cards played and general probabilities.
+    It does not know the maker's actual hand.
+    """
+    maker_hand_size = len(game_data_copy["hands"][maker_idx])
+    if maker_hand_size == 0:
+        return False # Maker has no cards left
+
+    target_card_eff_suit = get_effective_suit(target_card_to_beat, trump_suit)
+    target_card_value = get_card_value(target_card_to_beat, trump_suit, current_lead_suit)
+
+    # 1. Can maker follow suit and play a higher card?
+    if target_card_eff_suit != trump_suit and current_lead_suit == target_card_eff_suit : # Target card is of the lead suit (non-trump)
+        # Check for higher cards of this suit potentially held by maker
+        # This is hard without knowing maker's hand. A simple proxy:
+        # If target card is not an Ace, assume maker *might* have a higher card of that suit.
+        if target_card_to_beat.rank != 'A':
+            logging.debug(f"Predict: Maker might beat {str(target_card_to_beat)} (non-trump lead) with higher in suit.")
+            return True
+        # If target is Ace of lead suit, only trump can beat it.
+
+    # 2. Can maker play trump?
+    #    a. If target is not trump, any trump beats it.
+    #    b. If target is trump, maker needs higher trump.
+
+    # Get all cards played so far this round to estimate remaining cards
+    played_cards_this_round = set()
+    # from game_data_copy["last_completed_trick"] and game_data_copy["trick_cards"]
+    if game_data_copy.get("last_completed_trick") and game_data_copy["last_completed_trick"].get("played_cards"):
+        for tc_info in game_data_copy["last_completed_trick"]["played_cards"]:
+            played_cards_this_round.add((tc_info['card']['suit'], tc_info['card']['rank']))
+    for tc_info in game_data_copy.get("trick_cards", []): # Current trick's cards
+        played_cards_this_round.add((tc_info['card'].suit, tc_info['card'].rank)) # card is Card object here
+
+    # Cards in current AI's hand (who is calling this function) are also known
+    # This function is called by an AI player, so game_data_copy["hands"][current_ai_player_idx] are known.
+    # However, this function is generic for the maker, so we don't use current AI's hand directly here for maker's probability.
+
+    if target_card_eff_suit != trump_suit:
+        # Maker can beat non-trump target by playing any trump.
+        # Probability: Does maker have *any* trump?
+        # Count remaining trump cards not in played_cards_this_round
+        num_unseen_trump = 0
+        potential_trumps = [Card(s, r) for s in SUITS for r in RANKS if get_effective_suit(Card(s,r), trump_suit) == trump_suit]
+        for pt_card in potential_trumps:
+            if (pt_card.suit, pt_card.rank) not in played_cards_this_round:
+                num_unseen_trump +=1
+
+        # Simplistic: if there are unseen trumps and maker has cards, they *might* have one.
+        if num_unseen_trump > 0 and maker_hand_size > 0 :
+             # More refined: if many trumps are out, and maker has few cards, less likely.
+            if num_unseen_trump >= maker_hand_size or num_unseen_trump > 2: # Arbitrary: if at least 2-3 trumps are "available"
+                logging.debug(f"Predict: Maker might beat {str(target_card_to_beat)} (non-trump) with a trump. Unseen trumps: {num_unseen_trump}")
+                return True
+
+    # Target card is trump. Maker needs a higher trump.
+    if target_card_eff_suit == trump_suit:
+        num_unseen_higher_trumps = 0
+        potential_trumps = [Card(s, r) for s in SUITS for r in RANKS if get_effective_suit(Card(s,r), trump_suit) == trump_suit]
+        for pt_card in potential_trumps:
+            if (pt_card.suit, pt_card.rank) not in played_cards_this_round:
+                if get_card_value(pt_card, trump_suit, current_lead_suit) > target_card_value:
+                    num_unseen_higher_trumps += 1
+
+        if num_unseen_higher_trumps > 0 and maker_hand_size > 0:
+            # If the right/left bower or Ace of trump is still unseen and target isn't it, good chance.
+            logging.debug(f"Predict: Maker might beat {str(target_card_to_beat)} (trump) with a higher trump. Unseen higher trumps: {num_unseen_higher_trumps}")
+            return True
+
+    # Default: Less certain maker can beat it.
+    logging.debug(f"Predict: Maker less likely to beat {str(target_card_to_beat)} based on heuristics.")
+    return False
+
+
+def old_determine_trick_winner(trick_cards_played, trump_suit): # Keep old for reference during refactor if needed
     if not trick_cards_played: return -1
     winning_player = -1; highest_value_card = None
-    lead_card_obj = trick_cards_played[0]['card']; lead_suit_of_trick = get_effective_suit(lead_card_obj, trump_suit)
+    lead_card_obj = trick_cards_played[0]['card'];ตัดสิน_suit_of_trick = get_effective_suit(lead_card_obj, trump_suit) # Original: lead_suit_of_trick
     for play in trick_cards_played:
         player = play['player']; card = play['card']
-        card_effective_suit = get_effective_suit(card, trump_suit); card_value = get_card_value(card, trump_suit)
+        card_effective_suit = get_effective_suit(card, trump_suit); card_value = get_card_value(card, trump_suit,ตัดสิน_suit_of_trick) # Pass lead suit
         if highest_value_card is None: highest_value_card = card; winning_player = player
         else:
             highest_value_card_effective_suit = get_effective_suit(highest_value_card, trump_suit)
