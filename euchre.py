@@ -934,18 +934,34 @@ def score_round():
         message_suffix = f"Maker ({game_data['player_identities'][maker]}) {'went alone and ' if is_going_alone else ''}scores {points_awarded} point."
         game_data["scores"][maker] += points_awarded
     game_data["message"] = f"Round Over. {message_suffix}"
+
+    # First, definitively set phase to round_over.
+    logging.info(f"SCORE_ROUND: Current phase before update: {game_data.get('game_phase')}")
+    game_data["game_phase"] = "round_over"
+    logging.info(f"SCORE_ROUND: Phase updated to: {game_data.get('game_phase')}")
+
+    # Check for game winner
+    game_winner_found = False
     for p_idx, score in game_data["scores"].items():
         if score >= 10:
+            logging.info(f"SCORE_ROUND: Game over condition met for P{p_idx}. Current phase before update: {game_data.get('game_phase')}")
             game_data["game_phase"] = "game_over"
-        game_data["message"] += f" {game_data['player_identities'][p_idx]} wins the game!"
-        # --- RL Update for Game End ---
-        game_event_data = {"game_winner_idx": p_idx}
-        for ai_p_id in rl_agents.keys(): # Update all AI agents
-            process_rl_update(ai_p_id, "game_end", event_data=game_event_data)
-        # --- End RL Update ---
+            logging.info(f"SCORE_ROUND: Phase updated to: {game_data.get('game_phase')}")
+            game_data["message"] += f" {game_data['player_identities'][p_idx]} wins the game!"
+            # --- RL Update for Game End ---
+            game_event_data = {"game_winner_idx": p_idx}
+            for ai_p_id in rl_agents.keys(): # Update all AI agents
+                process_rl_update(ai_p_id, "game_end", event_data=game_event_data)
+            # --- End RL Update ---
+            game_winner_found = True
+            break # Exit loop once a winner is found and processed
+
+    if game_winner_found:
         return # Game is over, no further round processing needed for RL here
 
-    game_data["game_phase"] = "round_over"
+    # If game is not over, it's just round_over. RL update for round end.
+    # game_data["game_phase"] is already "round_over" if no winner was found.
+    logging.info(f"SCORE_ROUND: Round ended, no game winner yet. Phase: {game_data.get('game_phase')}")
     # --- RL Update for Round End (if game not over) ---
     round_event_data = {"round_tricks_won": game_data["round_tricks_won"].copy(), "maker": maker, "going_alone": is_going_alone}
     for ai_p_id in rl_agents.keys(): # Update all AI agents based on round outcome
@@ -1611,13 +1627,15 @@ def ai_play_turn_api():
     # for this specific request's view (less likely if state is truly global and consistent).
     if is_round_over(): # is_round_over() uses the global game_data
         logging.warning(f"AI Play Turn: Initial phase was '{current_phase}' but is_round_over() is true. Attempting to correct state.")
+        logging.info(f"AI Play Turn: game_phase BEFORE calling score_round() in is_round_over block: {game_data.get('game_phase')}")
         # Ensure score_round is called to update the phase in the global game_data
         # score_round() now has a guard against multiple scoring.
         score_round() # score_round updates global game_data if necessary
+        logging.info(f"AI Play Turn: game_phase AFTER calling score_round() in is_round_over block: {game_data.get('game_phase')}")
 
         # Re-fetch the game phase after score_round() has potentially updated it.
-        current_phase = game_data.get("game_phase")
-        logging.info(f"AI Play Turn: Phase after score_round() check is '{current_phase}'.")
+        current_phase = game_data.get("game_phase") # This re-fetch is crucial
+        logging.info(f"AI Play Turn: Re-fetched current_phase after score_round() is '{current_phase}'.")
 
         if current_phase in ["round_over", "game_over"]:
             logging.info(f"AI Play Turn: Round/Game is over (phase: {current_phase}). Not processing AI card play. Returning state.")
