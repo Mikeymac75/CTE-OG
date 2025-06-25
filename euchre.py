@@ -912,7 +912,13 @@ def old_determine_trick_winner(trick_cards_played, trump_suit): # Keep old for r
 def is_round_over(): return sum(game_data["round_tricks_won"].values()) >= 5
 
 def score_round():
-    global game_data; maker = game_data["maker"]; maker_tricks = game_data["round_tricks_won"][maker]
+    global game_data
+    # Prevent re-scoring if round/game is already marked as over
+    if game_data.get("game_phase") in ["round_over", "game_over"]:
+        logging.warning(f"score_round() called when game_phase is already {game_data.get('game_phase')}. Points not re-awarded.")
+        return
+
+    maker = game_data["maker"]; maker_tricks = game_data["round_tricks_won"][maker]
     points_awarded = 0; message_suffix = ""; is_going_alone = game_data.get("going_alone", False)
     if maker_tricks < 3:
         points_awarded = 2
@@ -1604,20 +1610,34 @@ def ai_play_turn_api():
     # This block handles the case where the round ended numerically but phase hasn't caught up yet
     # for this specific request's view (less likely if state is truly global and consistent).
     if is_round_over(): # is_round_over() uses the global game_data
-        logging.warning(f"AI Play Turn: Phase is '{current_phase}' but is_round_over() is true. Correcting state.")
+        logging.warning(f"AI Play Turn: Initial phase was '{current_phase}' but is_round_over() is true. Attempting to correct state.")
         # Ensure score_round is called to update the phase in the global game_data
-        if game_data.get("game_phase") not in ["round_over", "game_over"]: # Check global again before scoring
-            score_round() # score_round updates global game_data
-        # Return the corrected game state. The client should see "round_over" or "game_over"
-        # and stop making /api/ai_play_turn calls.
-        return jsonify(game_data_to_json(game_data)) # Returns 200 with the now-corrected state
+        # score_round() now has a guard against multiple scoring.
+        score_round() # score_round updates global game_data if necessary
 
-    # If we reach here: current_phase was "playing_tricks" and round was not numerically over at the start of this check.
-    logging.info(f"Processing AI P{current_player}'s card play. Phase: {current_phase}")
-    process_ai_play_card(current_player) # This function will modify global game_data
-                                         # It might call score_round() if this play ends the round.
+        # Re-fetch the game phase after score_round() has potentially updated it.
+        current_phase = game_data.get("game_phase")
+        logging.info(f"AI Play Turn: Phase after score_round() check is '{current_phase}'.")
 
-    # The response will be based on the state of global game_data AFTER process_ai_play_card.
+        if current_phase in ["round_over", "game_over"]:
+            logging.info(f"AI Play Turn: Round/Game is over (phase: {current_phase}). Not processing AI card play. Returning state.")
+            return jsonify(game_data_to_json(game_data))
+        else:
+            # This case should ideally not be reached if is_round_over() is true and score_round() works.
+            # It implies is_round_over() was true, but score_round didn't transition to a terminal phase.
+            logging.warning(f"AI Play Turn: is_round_over() was true, but phase is still '{current_phase}'. Proceeding cautiously with AI play.")
+            # Fall-through to process_ai_play_card, but this is an unusual state.
+
+    # If we reach here: current_phase should be "playing_tricks" and the round not numerically over,
+    # OR is_round_over() was true but phase didn't update to terminal (logged above).
+    if current_phase == "playing_tricks": # Explicitly check again
+        logging.info(f"Processing AI P{current_player}'s card play. Phase: {current_phase}")
+        process_ai_play_card(current_player) # This function will modify global game_data
+                                             # It might call score_round() if this play ends the round.
+    else:
+        logging.warning(f"AI Play Turn: Aborting AI card play because current_phase is '{current_phase}', not 'playing_tricks' after checks.")
+
+    # The response will be based on the state of global game_data AFTER any processing.
     return jsonify(game_data_to_json(game_data))
 
 def game_data_to_json(current_game_data_arg): # Renamed arg for clarity
