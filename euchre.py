@@ -913,9 +913,14 @@ def scripts_route(): return send_from_directory('.', 'script.js')
 @app.route('/api/start_game', methods=['GET'])
 def start_game_api():
     global game_data
-    if game_data["game_phase"] in ["game_over", "setup"]:
-        initialize_game_data(); game_data["dealer"] = random.randint(0, game_data["num_players"] - 1)
-    else: game_data["dealer"] = (game_data["dealer"] + 1) % game_data["num_players"]
+    # Use .get() for safer access to game_phase. If key is missing, treat as "setup".
+    current_phase = game_data.get("game_phase")
+    if current_phase is None or current_phase in ["game_over", "setup"]:
+        initialize_game_data()
+        # initialize_game_data sets dealer randomly, so no need to set it again here
+        # game_data["dealer"] = random.randint(0, game_data["num_players"] - 1) # This line is now redundant
+    else:
+        game_data["dealer"] = (game_data["dealer"] + 1) % game_data["num_players"]
     initialize_new_round()
     if game_data["game_phase"] == "bidding_round_1" and game_data["current_player_turn"] != 0:
         logging.info(f"Starting game/new round: P{game_data['current_player_turn']} (AI) to start bidding_round_1.")
