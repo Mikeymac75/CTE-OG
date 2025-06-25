@@ -9,7 +9,7 @@ from flask import Flask, jsonify, render_template, send_from_directory, request
 app = Flask(__name__)
 
 # Configure logging
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+logging.basicConfig(level=logging.WARNING, format='%(asctime)s - %(levelname)s - %(message)s')
 
 # --- RL Agent Configuration ---
 Q_TABLE_DB_FILE = "q_table.sqlite" # Changed from Q_TABLE_FILE = "q_table.json"
@@ -1875,13 +1875,13 @@ if __name__ == "__main__":
         logging.info(f"Training simulation finished for {num_games_to_simulate} games. Q-values are stored in {Q_TABLE_DB_FILE}.")
 
     # Example of how to run it (e.g. for 10 iterations as requested for testing)
-    # run_training_simulation(10, save_interval=5) # save_interval is no longer used with SQLite
+    run_training_simulation(10000, save_interval=5) # save_interval is no longer used with SQLite
 
     # To migrate existing q_table.json to SQLite (run once):
     # migrate_json_to_sqlite()
 
     # To run the Flask app:
-    app.run(debug=True, host='0.0.0.0')
+    # app.run(debug=True, host='0.0.0.0')
 
 def migrate_json_to_sqlite(json_file_path="q_table.json", db_file_path=None):
     """
