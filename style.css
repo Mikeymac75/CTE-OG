@@ -360,33 +360,159 @@ h2 {
 
 /* Responsive adjustments */
 @media (max-width: 768px) { /* Adjust breakpoint as needed */
+    body {
+        padding: 10px; /* Reduce body padding */
+    }
+
     .game-container {
         flex-direction: column;
         align-items: center; /* Center items when stacked */
-        width: 95%;
+        width: 100%; /* Use full width */
+        padding: 10px;
         max-width: none; /* Allow it to use the screen width */
     }
 
     .sidebar, .main-content {
         width: 100%; /* Full width for stacked layout */
         padding-right: 0; /* Remove sidebar padding */
-        margin-bottom: 20px; /* Add space between stacked sidebar and main content */
+        margin-bottom: 15px; /* Reduce space between stacked sidebar and main content */
     }
 
     .main-content {
         margin-bottom: 0; /* No margin at the very bottom */
     }
 
-    .player-areas {
-        flex-direction: column; /* Stack player areas */
-        align-items: center; /* Center them */
+    .sidebar {
+        flex-direction: row; /* Layout sidebar items horizontally */
+        flex-wrap: wrap; /* Allow wrapping if they don't fit */
+        justify-content: space-around; /* Distribute space evenly */
+        gap: 10px; /* Add gap for sidebar items */
+    }
+    .sidebar > div { /* Target direct children of sidebar (scoreboard, overall-stats) */
+        width: calc(50% - 10px); /* Allow two items side-by-side, accounting for gap */
+        margin-bottom: 10px; /* Space between wrapped items */
+    }
+    .sidebar .scoreboard, .sidebar .overall-stats { /* More specific targeting */
+        padding: 8px; /* Reduce padding */
     }
 
-    .opponent-area, .table-center {
-        width: 90%; /* Adjust width for stacked layout */
-        margin-bottom: 15px; /* Space between stacked elements */
+
+    .player-areas {
+        display: flex; /* Use flex for better control */
+        flex-wrap: wrap; /* Allow wrapping */
+        justify-content: space-around; /* Distribute space */
+        align-items: flex-start; /* Align items to the start of the cross axis */
+        width: 100%;
     }
+
+    .opponent-area {
+        width: calc(50% - 10px); /* Two opponents side-by-side, accounting for potential gap if using justify-content: space-between on parent */
+        margin-bottom: 10px; /* Space below opponent areas */
+        padding: 8px; /* Reduce padding */
+        box-sizing: border-box; /* Include padding and border in the element's total width and height */
+    }
+     /* Ensure opponent areas are next to each other */
+    #player-2.opponent-area {
+        margin-right: 5px; /* Small space between P2 and P3 */
+    }
+    #player-3.opponent-area {
+        margin-left: 5px;  /* Small space between P2 and P3 */
+    }
+
+
+    .table-center {
+        width: 100%; /* Table center takes full width */
+        order: 1; /* Ensure it appears after opponents but before human player's hand if stacking changes */
+        margin-bottom: 10px; /* Space below table center */
+        padding: 8px; /* Reduce padding */
+    }
+
     .human-player-area {
-        width: 90%; /* Match other areas in stacked view */
+        width: 100%; /* Human player takes full width */
+        margin-top: 10px; /* Space from elements above */
+        order: 2; /* Ensure it's last in the visual flow of player areas */
+        padding: 8px; /* Reduce padding */
+    }
+
+    /* Card adjustments */
+    .card {
+        width: 48px; /* Smaller cards */
+        height: 72px;
+        font-size: 0.65em; /* Smaller font on cards */
+        padding: 4px; /* Adjust padding */
+    }
+    .card .suit {
+        font-size: 1.3em; /* Adjust suit icon size */
+    }
+    .hand {
+        min-height: 75px; /* Adjust min-height for smaller cards */
+        gap: 4px; /* Adjust gap between cards */
+        flex-wrap: wrap; /* Ensure cards wrap if not enough space */
+    }
+    .trick-area .card { /* Smaller cards in trick area */
+        width: 40px;
+        height: 60px;
+    }
+    .trick-card-container {
+        margin: 1px 3px;
+        padding: 2px;
+    }
+    .trick-player-identifier {
+        font-size: 0.8em;
+    }
+
+
+    /* Font size adjustments */
+    header h1 {
+        font-size: 1.4em; /* Slightly smaller h1 */
+        margin-bottom: 8px;
+    }
+    .player-area h2, .trick-area h3, .scoreboard h3, .overall-stats h3, .previous-trick-log-area h3, .actions-area h3, .current-hand-tricks-area h3 {
+        font-size: 1em; /* Standardize h2/h3 used as titles in these sections */
+        margin-bottom: 8px;
+    }
+
+    .game-info p, .scoreboard p, .overall-stats p, .current-hand-tricks-area p {
+        font-size: 0.75em; /* Smaller info text */
+        margin: 2px 0;
+    }
+    .actions-area button {
+        padding: 7px 10px; /* Smaller buttons */
+        font-size: 0.85em;
+        margin: 3px;
+    }
+    #game-message {
+        font-size: 0.8em; /* Smaller game messages */
+    }
+    #previous-trick-log .trick-entry {
+        font-size: 0.8em;
+        padding: 6px;
+    }
+
+
+    /* Spacing adjustments for main blocks */
+    .current-hand-tricks-area,
+    /* .player-area,  already handled by .opponent-area, .human-player-area */
+    .trick-area,
+    /* .scoreboard, .overall-stats, /* Handled by .sidebar > div */
+    .previous-trick-log-area {
+        padding: 8px; /* Consistent padding */
+        margin-bottom: 10px; /* Consistent bottom margin */
+    }
+
+
+    .actions-area, .messages-area {
+        padding-top: 8px; /* Reduce top padding */
+        margin-top: 10px; /* Reduce top margin */
+    }
+
+    header {
+        margin-bottom: 10px; /* Reduce space below header */
+        padding-bottom: 8px; /* Reduce padding below header */
+    }
+
+    /* More specific selectors if defaults are too broad */
+    .opponent-area h2, .human-player-area h2 {
+        font-size: 1em; /* Ensure these titles are also adjusted */
     }
 }
