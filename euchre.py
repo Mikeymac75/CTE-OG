@@ -1739,11 +1739,11 @@ if __name__ == "__main__":
                              # For now, assume primary flows cover AI discard.
                              pass
                         else:
-                            logging.warning(f"Training Loop: AI P{current_player_id} in unhandled phase {current_phase}. Advancing turn by default.")
-                            # This might indicate a missed RL update point or game logic needing refinement for simulation.
-                            # For now, this simple advance might break game flow if AI was supposed to act.
-                            # A robust simulation might need to force a valid (random/heuristic) action.
-                            # game_data["current_player_turn"] = (current_player_id + 1) % game_data["num_players"]
+                            logging.error(f"Training Loop: AI P{current_player_id} in UNHANDLED phase {current_phase} for game {game_num}. Aborting this game.")
+                            game_data["message"] = f"AI P{current_player_id} entered unhandled phase {current_phase}. Game {game_num} aborted."
+                            # Force the current game to end and allow the simulation to proceed to the next game.
+                            game_over_flag = True
+                            round_over_flag = True # Ensure exit from inner while loop as well
 
 
                     else: # Player 0 (Human) - automate for simulation
