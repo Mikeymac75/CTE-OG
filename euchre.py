@@ -357,6 +357,7 @@ def submit_action_api():
                 game_data["game_phase"] = "dealer_must_discard_after_order_up"
             current_message += f" {game_data['player_identities'][current_dealer_idx]} (Dealer) must discard 1 card."
             logging.info(f"Human Dealer P{current_dealer_idx} to discard 1. Phase: {game_data['game_phase']}. Maker: P{game_data['maker']}.")
+            game_data["message"] = current_message # Update message here for human dealer
 
         else: # AI Dealer
             logging.info(f"AI Dealer P{current_dealer_idx} ({game_data['player_identities'][current_dealer_idx]}) must discard 1. Maker: P{game_data['maker']}. Trump: {game_data['trump_suit']}.")
