@@ -840,5 +840,3 @@ def game_data_to_json(current_game_data):
 
 if __name__ == "__main__":
     app.run(debug=True, host='0.0.0.0')
-
-[end of euchre.py]
