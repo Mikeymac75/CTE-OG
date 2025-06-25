@@ -3,6 +3,7 @@ import logging
 import time
 import json # Added for RL Agent state serialization
 import os   # Added for saving/loading Q-table
+import sqlite3 # Added for SQLite Q-table storage
 from flask import Flask, jsonify, render_template, send_from_directory, request
 
 app = Flask(__name__)
@@ -11,7 +12,7 @@ app = Flask(__name__)
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
 # --- RL Agent Configuration ---
-Q_TABLE_FILE = "q_table.json"
+Q_TABLE_DB_FILE = "q_table.sqlite" # Changed from Q_TABLE_FILE = "q_table.json"
 REWARD_WIN_TRICK = 5
 REWARD_LOSE_TRICK = -5
 REWARD_WIN_ROUND_MAKER_NORMAL = 20
@@ -35,34 +36,33 @@ MIN_EPSILON = 0.01
 class RLAgent:
     def __init__(self, player_id, learning_rate=DEFAULT_LEARNING_RATE, discount_factor=DEFAULT_DISCOUNT_FACTOR, epsilon=DEFAULT_EPSILON):
         self.player_id = player_id
-        self.q_table = self.load_q_table()
         self.lr = learning_rate
         self.gamma = discount_factor
         self.epsilon = epsilon
         self.training_mode = True # Can be set to False for exploitation only
+        self.db_conn = self._init_db()
+        # self.q_table cache is removed; direct DB operations will be used.
+
+    def _init_db(self):
+        """Initializes SQLite connection and creates table if it doesn't exist."""
+        conn = sqlite3.connect(Q_TABLE_DB_FILE, check_same_thread=False) # check_same_thread=False for Flask if accessed across requests by same agent instance
+        cursor = conn.cursor()
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS q_values (
+                state_key TEXT PRIMARY KEY,
+                actions_q_values TEXT NOT NULL
+            )
+        """)
+        conn.commit()
+        logging.info(f"RLAgent P{self.player_id}: SQLite DB initialized/connected at {Q_TABLE_DB_FILE}")
+        return conn
 
     def set_training_mode(self, mode):
         self.training_mode = mode
         if not mode:
             self.epsilon = 0 # No exploration if not training
 
-    def load_q_table(self):
-        if os.path.exists(Q_TABLE_FILE):
-            try:
-                with open(Q_TABLE_FILE, 'r') as f:
-                    return json.load(f)
-            except (json.JSONDecodeError, IOError) as e:
-                logging.error(f"Error loading Q-table: {e}. Starting with an empty table.")
-                return {}
-        return {}
-
-    def save_q_table(self):
-        try:
-            with open(Q_TABLE_FILE, 'w') as f:
-                json.dump(self.q_table, f, indent=2)
-            logging.info(f"Q-table saved to {Q_TABLE_FILE}")
-        except IOError as e:
-            logging.error(f"Error saving Q-table: {e}")
+    # load_q_table and save_q_table are removed as we operate directly on DB
 
     def _serialize_state(self, state_dict):
         """Converts a state dictionary to a canonical string representation for Q-table keys."""
@@ -70,7 +70,14 @@ class RLAgent:
         return json.dumps(state_dict, sort_keys=True)
 
     def get_q_value(self, state_key, action_key):
-        return self.q_table.get(state_key, {}).get(action_key, 0.0)
+        """Fetches Q-value from SQLite."""
+        cursor = self.db_conn.cursor()
+        cursor.execute("SELECT actions_q_values FROM q_values WHERE state_key = ?", (state_key,))
+        row = cursor.fetchone()
+        if row:
+            actions_dict = json.loads(row[0])
+            return actions_dict.get(action_key, 0.0)
+        return 0.0
 
     def choose_action(self, state_dict, valid_actions):
         """
@@ -125,28 +132,66 @@ class RLAgent:
             return
 
         state_key = self._serialize_state(state_dict)
-        action_key = self._serialize_action(action)
+        action_key = self._serialize_action(action) # Serialized action
         next_state_key = self._serialize_state(next_state_dict)
 
-        old_value = self.get_q_value(state_key, action_key)
+        # Fetch current Q-values for the state, or an empty dict if state is new
+        cursor = self.db_conn.cursor()
+        cursor.execute("SELECT actions_q_values FROM q_values WHERE state_key = ?", (state_key,))
+        row = cursor.fetchone()
+        actions_q_dict = {}
+        if row:
+            try:
+                actions_q_dict = json.loads(row[0])
+            except json.JSONDecodeError:
+                logging.error(f"RLAgent P{self.player_id}: Failed to decode actions_q_values for state {state_key}. Starting fresh for this state.")
+                actions_q_dict = {}
+
+        old_value = actions_q_dict.get(action_key, 0.0)
 
         # Q-learning: Q(s,a) = Q(s,a) + lr * [reward + gamma * max_a'(Q(s',a')) - Q(s,a)]
         next_max_q = 0.0
         if next_valid_actions: # If there are next actions (not a terminal state for Q-learning)
-            next_max_q = max(self.get_q_value(next_state_key, self._serialize_action(next_action)) for next_action in next_valid_actions) \
-                         if next_valid_actions else 0.0
+            # Fetch Q-values for next_state to find max_a'
+            cursor.execute("SELECT actions_q_values FROM q_values WHERE state_key = ?", (next_state_key,))
+            next_row = cursor.fetchone()
+            if next_row:
+                try:
+                    next_actions_q_dict = json.loads(next_row[0])
+                    if next_actions_q_dict: # Check if not empty
+                         next_max_q = max(next_actions_q_dict.get(self._serialize_action(next_action), 0.0) for next_action in next_valid_actions)
+                except json.JSONDecodeError:
+                    logging.error(f"RLAgent P{self.player_id}: Failed to decode actions_q_values for next_state {next_state_key}.")
+            # If next_state not in DB or actions empty, next_max_q remains 0.0, which is correct.
+            # Also, if next_valid_actions is empty, this loop is skipped and next_max_q is 0.0
 
         new_value = old_value + self.lr * (reward + self.gamma * next_max_q - old_value)
+        actions_q_dict[action_key] = new_value
 
-        if state_key not in self.q_table:
-            self.q_table[state_key] = {}
-        self.q_table[state_key][action_key] = new_value
-        logging.debug(f"RLAgent P{self.player_id} Q-Update: StateKey: {state_key}, ActionKey: {action_key}, Reward: {reward}, OldQ: {old_value:.2f}, NewQ: {new_value:.2f}, NextMaxQ: {next_max_q:.2f}")
+        # Update the database
+        updated_actions_q_json = json.dumps(actions_q_dict)
+        try:
+            cursor.execute("""
+                INSERT INTO q_values (state_key, actions_q_values) VALUES (?, ?)
+                ON CONFLICT(state_key) DO UPDATE SET actions_q_values = excluded.actions_q_values
+            """, (state_key, updated_actions_q_json))
+            self.db_conn.commit()
+        except sqlite3.Error as e:
+            logging.error(f"RLAgent P{self.player_id}: SQLite error during Q-update: {e}")
+            # Optionally, implement a retry mechanism or error handling strategy
+
+        logging.debug(f"RLAgent P{self.player_id} Q-Update (DB): StateKey: {state_key}, ActionKey: {action_key}, Reward: {reward}, OldQ: {old_value:.2f}, NewQ: {new_value:.2f}, NextMaxQ: {next_max_q:.2f}")
 
         # Epsilon decay after update
         if self.epsilon > MIN_EPSILON:
             self.epsilon *= EPSILON_DECAY
             self.epsilon = max(MIN_EPSILON, self.epsilon)
+
+    def __del__(self):
+        """Ensure DB connection is closed when agent instance is garbage collected."""
+        if hasattr(self, 'db_conn') and self.db_conn:
+            self.db_conn.close()
+            logging.info(f"RLAgent P{self.player_id}: SQLite DB connection closed.")
 
 # --- Card and Deck Setup ---
 SUITS_MAP = {'H': 'Hearts', 'D': 'Diamonds', 'C': 'Clubs', 'S': 'Spades'}
@@ -1531,19 +1576,56 @@ def get_current_state_api():
 
 @app.route('/api/ai_play_turn', methods=['POST'])
 def ai_play_turn_api():
-    global game_data; logging.info("Received request for AI to play turn.")
-    current_player = game_data.get("current_player_turn"); current_phase = game_data.get("game_phase")
-    if current_player == 0: return jsonify({"error": "Not AI's turn.", "game_state": game_data_to_json(game_data)}), 400
-    if current_phase != "playing_tricks": return jsonify({"error": "AI can only play cards in 'playing_tricks' phase.", "game_state": game_data_to_json(game_data)}), 400
-    if is_round_over():
-        if game_data["game_phase"] not in ["round_over", "game_over"]: score_round()
-        return jsonify(game_data_to_json(game_data))
-    logging.info(f"Processing AI P{current_player}'s turn via dedicated endpoint.")
-    process_ai_play_card(current_player)
+    global game_data
+    logging.info("Received request for AI to play turn endpoint.") # Added 'endpoint' for clarity
+
+    # It's crucial to read the game state ONCE at the beginning of the request
+    # to ensure all decisions within this function call are based on a consistent snapshot.
+    current_game_state_snapshot = game_data.copy() # Shallow copy for consistent read
+    current_player = current_game_state_snapshot.get("current_player_turn")
+    current_phase = current_game_state_snapshot.get("game_phase")
+
+    logging.info(f"AI Play Turn: Current player P{current_player}, Phase: {current_phase}")
+
+    if current_player == 0:
+        logging.warning("AI play rejected: Not AI's turn (P0).")
+        return jsonify({"error": "Not AI's turn.", "game_state": game_data_to_json(game_data)}), 400
+
+    if current_phase != "playing_tricks":
+        logging.warning(f"AI play rejected: Phase is '{current_phase}', not 'playing_tricks'.")
+        # Return current state along with the error, so client can update if needed.
+        return jsonify({
+            "error": f"AI cannot play. Game phase is '{current_phase}', not 'playing_tricks'.",
+            "game_state": game_data_to_json(game_data)
+        }), 400 # Crucially, this is a 400 error.
+
+    # If phase is "playing_tricks" but trick count indicates round is over,
+    # this implies a state discrepancy that score_round() should resolve.
+    # This block handles the case where the round ended numerically but phase hasn't caught up yet
+    # for this specific request's view (less likely if state is truly global and consistent).
+    if is_round_over(): # is_round_over() uses the global game_data
+        logging.warning(f"AI Play Turn: Phase is '{current_phase}' but is_round_over() is true. Correcting state.")
+        # Ensure score_round is called to update the phase in the global game_data
+        if game_data.get("game_phase") not in ["round_over", "game_over"]: # Check global again before scoring
+            score_round() # score_round updates global game_data
+        # Return the corrected game state. The client should see "round_over" or "game_over"
+        # and stop making /api/ai_play_turn calls.
+        return jsonify(game_data_to_json(game_data)) # Returns 200 with the now-corrected state
+
+    # If we reach here: current_phase was "playing_tricks" and round was not numerically over at the start of this check.
+    logging.info(f"Processing AI P{current_player}'s card play. Phase: {current_phase}")
+    process_ai_play_card(current_player) # This function will modify global game_data
+                                         # It might call score_round() if this play ends the round.
+
+    # The response will be based on the state of global game_data AFTER process_ai_play_card.
     return jsonify(game_data_to_json(game_data))
 
-def game_data_to_json(current_game_data):
-    json_safe_data = current_game_data.copy()
+def game_data_to_json(current_game_data_arg): # Renamed arg for clarity
+    global game_data # Access the true global game_data
+    # Ensure that the data being serialized is from the single global source,
+    # especially critical if current_game_data_arg could somehow be a stale copy.
+    json_safe_data = game_data.copy()
+
     if json_safe_data.get('deck'): json_safe_data['deck'] = [card.to_dict() for card in json_safe_data['deck']]
     if json_safe_data.get('hands'): json_safe_data['hands'] = { p_idx: [card.to_dict() for card in hand] for p_idx, hand in json_safe_data['hands'].items()}
     if json_safe_data.get('dummy_hand'): json_safe_data['dummy_hand'] = [card.to_dict() for card in json_safe_data['dummy_hand']]
@@ -1744,16 +1826,86 @@ if __name__ == "__main__":
                         # break # Will be caught by outer loop's while condition or next iteration's check
 
             logging.info(f"--- Training Game {game_num} ended. Scores: {game_data['scores']} ---")
-            if game_num % save_interval == 0:
-                for agent_id, agent in rl_agents.items():
-                    agent.save_q_table()
+            # Removed periodic save_q_table calls as DB is updated continuously.
+            # if game_num % save_interval == 0:
+            #     for agent_id, agent in rl_agents.items():
+            #         pass # agent.save_q_table() removed
 
-        # Final save
-        for agent_id, agent in rl_agents.items():
-            agent.save_q_table()
-        logging.info(f"Training simulation finished for {num_games_to_simulate} games.")
+        # Final save is also not needed as DB is always up-to-date.
+        # for agent_id, agent in rl_agents.items():
+        #     pass # agent.save_q_table() removed
+        logging.info(f"Training simulation finished for {num_games_to_simulate} games. Q-values are stored in {Q_TABLE_DB_FILE}.")
 
     # Example of how to run it (e.g. for 10 iterations as requested for testing)
-    # run_training_simulation(10, save_interval=5)
+    # run_training_simulation(10, save_interval=5) # save_interval is no longer used with SQLite
+
+    # To migrate existing q_table.json to SQLite (run once):
+    # migrate_json_to_sqlite()
+
     # To run the Flask app:
     app.run(debug=True, host='0.0.0.0')
+
+def migrate_json_to_sqlite(json_file_path="q_table.json", db_file_path=None):
+    """
+    Migrates data from an old JSON Q-table file to the SQLite database.
+    """
+    if db_file_path is None:
+        db_file_path = Q_TABLE_DB_FILE # Use the global constant
+
+    if not os.path.exists(json_file_path):
+        logging.info(f"JSON file {json_file_path} not found. No migration needed or possible.")
+        return
+
+    try:
+        with open(json_file_path, 'r') as f:
+            json_q_table = json.load(f)
+        logging.info(f"Successfully loaded Q-table from {json_file_path}.")
+    except (json.JSONDecodeError, IOError) as e:
+        logging.error(f"Error loading Q-table from {json_file_path}: {e}. Migration aborted.")
+        return
+
+    if not json_q_table:
+        logging.info("JSON Q-table is empty. Nothing to migrate.")
+        return
+
+    conn = None
+    try:
+        conn = sqlite3.connect(db_file_path)
+        cursor = conn.cursor()
+        # Ensure the table exists (though RLAgent instantiation usually does this)
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS q_values (
+                state_key TEXT PRIMARY KEY,
+                actions_q_values TEXT NOT NULL
+            )
+        """)
+        conn.commit()
+
+        migrated_count = 0
+        skipped_count = 0
+        for state_key, actions_dict in json_q_table.items():
+            if not isinstance(actions_dict, dict):
+                logging.warning(f"Skipping state_key '{state_key}' due to invalid actions_dict format: {type(actions_dict)}")
+                skipped_count += 1
+                continue
+
+            actions_q_values_json = json.dumps(actions_dict) # Serialize the actions dict to JSON string
+            try:
+                cursor.execute("""
+                    INSERT INTO q_values (state_key, actions_q_values) VALUES (?, ?)
+                    ON CONFLICT(state_key) DO UPDATE SET actions_q_values = excluded.actions_q_values
+                """, (state_key, actions_q_values_json))
+                migrated_count += 1
+            except sqlite3.Error as e:
+                logging.error(f"Error migrating state_key '{state_key}': {e}")
+                skipped_count +=1
+
+        conn.commit()
+        logging.info(f"Migration complete. Migrated {migrated_count} states. Skipped {skipped_count} states.")
+
+    except sqlite3.Error as e:
+        logging.error(f"SQLite error during migration: {e}")
+    finally:
+        if conn:
+            conn.close()
+            logging.info(f"SQLite connection closed for migration utility.")
