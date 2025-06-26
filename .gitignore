@@ -1,0 +1,5 @@
+# Ignore the SQLite database file
+q_table.sqlite
+
+# Ignore the old JSON file too
+q_table.json
