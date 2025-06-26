@@ -427,11 +427,34 @@ h2 {
         padding: 8px; /* Reduce padding */
     }
 
+    header { /* Ensure header is part of the order */
+        order: 1;
+    }
+
+    .player-areas { /* Contains opponents and table-center */
+        /* display: flex; flex-wrap: wrap; justify-content: space-around; width: 100%; */ /* These are existing properties */
+        order: 2;
+    }
+
+    /* .table-center itself has order: 1 within .player-areas, which is correct for its internal layout */
+
     .human-player-area {
         width: 100%; /* Human player takes full width */
         margin-top: 10px; /* Space from elements above */
-        order: 2; /* Ensure it's last in the visual flow of player areas */
+        order: 3; /* Player's hand after header and player-areas/table-center */
         padding: 8px; /* Reduce padding */
+    }
+
+    .actions-area {
+        order: 4;
+    }
+
+    .messages-area {
+        order: 5;
+    }
+
+    .previous-trick-log-area {
+        order: 6;
     }
 
     /* Card adjustments */
