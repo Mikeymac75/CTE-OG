@@ -264,7 +264,7 @@ def get_rl_state(player_id, current_game_data):
         "current_player_turn": current_game_data.get("current_player_turn"), # Useful to know if it's this agent's turn
 
         "hand": [c['suit'] + c['rank'] for c in hand_serialized], # Simplified representation
-        "hand_strength_no_trump": evaluate_potential_trump_strength(hand, None, current_game_data),
+        # "hand_strength_no_trump": evaluate_potential_trump_strength(hand, None, current_game_data), # Replaced by features
 
         # Bidding specific
         "up_card_suit": up_card_dict.suit if up_card_dict and current_game_data.get("up_card_visible") else None,
@@ -289,16 +289,85 @@ def get_rl_state(player_id, current_game_data):
         "going_alone": current_game_data.get("going_alone", False)
     }
 
+    # Add hand features to the state
+    # The trump_suit for feature calculation should be the actual current trump_suit if set,
+    # or None if bidding (as trump isn't decided yet for the hand itself).
+    # During bidding phases, the agent might consider potential trump suits separately.
+    current_trump_for_features = current_game_data.get("trump_suit")
+    hand_card_objects = current_game_data["hands"].get(player_id, []) # Get actual Card objects
+    calculated_features = get_hand_features(hand_card_objects, current_trump_for_features)
+    for feature_name, feature_value in calculated_features.items():
+        state[f"feat_{feature_name}"] = feature_value
+
+
     # Add hand strength for potential trump suits during bidding
+    # This can remain, or we can rely on the agent learning from raw features.
+    # For now, let's keep evaluate_potential_trump_strength as it's a useful heuristic.
+    # The new "feat_*" will be based on actual trump (or None if no trump).
+    # The "strength_as_trump_X" are specific to bidding.
+
     if state["game_phase"] == "bidding_round_1" and state["up_card_suit"]:
-        state[f"strength_as_trump_{state['up_card_suit']}"] = evaluate_potential_trump_strength(hand, state["up_card_suit"], current_game_data)
+        # state[f"strength_as_trump_{state['up_card_suit']}"] = evaluate_potential_trump_strength(hand, state["up_card_suit"], current_game_data)
+        # Instead of just strength, let's add full features for the potential trump suit
+        potential_trump_features = get_hand_features(hand_card_objects, state["up_card_suit"])
+        for f_name, f_val in potential_trump_features.items():
+            state[f"potential_trump_{state['up_card_suit']}_{f_name}"] = f_val
+        # Also keep the overall strength score for this potential trump
+        state[f"eval_strength_as_trump_{state['up_card_suit']}"] = evaluate_potential_trump_strength(hand_card_objects, state["up_card_suit"], current_game_data)
+
+
     elif state["game_phase"] == "bidding_round_2":
         for s_option in SUITS:
             if s_option != state["original_up_card_suit"]: # Cannot call the turned down suit
-                 state[f"strength_as_trump_{s_option}"] = evaluate_potential_trump_strength(hand, s_option, current_game_data)
+                 # state[f"strength_as_trump_{s_option}"] = evaluate_potential_trump_strength(hand, s_option, current_game_data)
+                potential_trump_features_r2 = get_hand_features(hand_card_objects, s_option)
+                for f_name, f_val in potential_trump_features_r2.items():
+                    state[f"potential_trump_{s_option}_{f_name}"] = f_val
+                state[f"eval_strength_as_trump_{s_option}"] = evaluate_potential_trump_strength(hand_card_objects, s_option, current_game_data)
+
 
     # Clean state: remove None values for more consistent serialization, or handle them in serialization
     # For now, json.dumps handles None as null, which is fine.
+
+    # Add played card information to the state
+    played_cards_in_round = current_game_data.get("played_cards_this_round", [])
+    state["played_cards_serialized"] = sorted([f"{c.suit}{c.rank}" for c in played_cards_in_round]) # Store as sorted list of strings
+
+    # Initialize specific flags/counts for played cards
+    state["played_right_bower"] = False
+    state["played_left_bower"] = False
+    state["played_ace_trump"] = False
+    state["played_king_trump"] = False
+    state["played_queen_trump"] = False
+    state["num_trump_cards_played"] = 0
+    for s_key in SUITS:
+        state[f"num_suit_played_{s_key}"] = 0
+
+    current_trump_suit = current_game_data.get("trump_suit")
+    if current_trump_suit: # Only calculate these if trump is set
+        left_bower_actual_suit = get_left_bower_suit(current_trump_suit)
+        for card in played_cards_in_round:
+            state[f"num_suit_played_{card.suit}"] += 1 # Count natural suit played
+
+            effective_card_suit = get_effective_suit(card, current_trump_suit)
+            if effective_card_suit == current_trump_suit:
+                state["num_trump_cards_played"] += 1
+                if card.rank == 'J':
+                    if card.suit == current_trump_suit:
+                        state["played_right_bower"] = True
+                    elif card.suit == left_bower_actual_suit:
+                        state["played_left_bower"] = True
+                elif card.rank == 'A':
+                    state["played_ace_trump"] = True
+                elif card.rank == 'K':
+                    state["played_king_trump"] = True
+                elif card.rank == 'Q':
+                    state["played_queen_trump"] = True
+    else: # If trump is not set, still count natural suits played
+        for card in played_cards_in_round:
+            state[f"num_suit_played_{card.suit}"] += 1
+
+
     return state
 
 def initialize_game_data():
@@ -528,6 +597,7 @@ def initialize_new_round():
     game_data["passes_on_calling"] = []
     game_data["cards_to_discard_count"] = 0
     game_data["last_completed_trick"] = None
+    game_data["played_cards_this_round"] = [] # Initialize played cards for the new round
     game_data["message"] = f"{game_data['player_identities'][game_data['current_player_turn']]}'s turn. Up-card: {str(game_data['up_card'])}."
     logging.info(f"New round initialized. Up-card: {str(game_data['up_card']) if game_data['up_card'] else 'N/A'}. Turn: P{game_data['current_player_turn']}. Phase: {game_data['game_phase']}")
 
@@ -555,7 +625,130 @@ def get_card_value(card, trump_suit, lead_suit_for_trick=None):
     non_trump_rank_values = {'K': 25, 'Q': 20, 'J': 15, '10': 10, '9': 5}
     return non_trump_rank_values.get(card.rank, 0)
 
+# --- Card Sense Feature Detection ---
+def get_hand_features(hand: list[Card], trump_suit: str | None) -> dict:
+    """
+    Analyzes a player's hand and returns a dictionary of "Card Sense" features.
+    hand: A list of Card objects.
+    trump_suit: The current trump suit (e.g., 'H', 'D', 'C', 'S') or None if not yet determined.
+    """
+    features = {
+        "num_trump_cards": 0,
+        "has_right_bower": False,
+        "has_left_bower": False,
+        "has_ace_of_trump": False,
+        "has_king_of_trump": False,
+        "has_queen_of_trump": False,
+        "num_aces_offsuit": 0,
+        "num_suits_void_natural": 0, # Void in natural suit (H,D,C,S)
+        "is_void_in_suit_H": True,
+        "is_void_in_suit_D": True,
+        "is_void_in_suit_C": True,
+        "is_void_in_suit_S": True,
+        "highest_trump_card_rank_value": 0,
+        "lowest_trump_card_rank_value": 0, # Effectively non-zero if num_trump_cards > 0
+        "num_cards_in_longest_offsuit": 0,
+        "shortest_offsuit_length": 5, # Max hand size, will be updated
+    }
+
+    if not hand: # Handle empty hand case
+        features["shortest_offsuit_length"] = 0
+        features["num_suits_void_natural"] = 4 # All suits are void if hand is empty
+        # is_void_in_suit_X defaults to True, which is correct for an empty hand.
+        return features
+
+    trump_cards_in_hand = []
+    offsuit_cards_by_suit = {s: [] for s in SUITS}
+    natural_suit_counts = {s: 0 for s in SUITS}
+
+    left_bower_actual_suit = get_left_bower_suit(trump_suit) if trump_suit else None
+
+    for card in hand:
+        natural_suit_counts[card.suit] += 1
+        features[f"is_void_in_suit_{card.suit}"] = False # Mark suit as not void
+
+        effective_suit = get_effective_suit(card, trump_suit)
+
+        if trump_suit and effective_suit == trump_suit:
+            features["num_trump_cards"] += 1
+            trump_cards_in_hand.append(card)
+            card_value_in_trump = get_card_value(card, trump_suit) # Use consistent trump valuation
+
+            if features["lowest_trump_card_rank_value"] == 0 or card_value_in_trump < features["lowest_trump_card_rank_value"]:
+                features["lowest_trump_card_rank_value"] = card_value_in_trump
+            if card_value_in_trump > features["highest_trump_card_rank_value"]:
+                features["highest_trump_card_rank_value"] = card_value_in_trump
+
+            if card.rank == 'J':
+                if card.suit == trump_suit:
+                    features["has_right_bower"] = True
+                elif card.suit == left_bower_actual_suit: # This is the Left Bower
+                    features["has_left_bower"] = True
+            elif card.rank == 'A':
+                features["has_ace_of_trump"] = True
+            elif card.rank == 'K':
+                features["has_king_of_trump"] = True
+            elif card.rank == 'Q':
+                features["has_queen_of_trump"] = True
+        else: # Card is off-suit (or trump not yet determined)
+            offsuit_cards_by_suit[card.suit].append(card)
+            if card.rank == 'A':
+                features["num_aces_offsuit"] += 1
+
+    # Calculate void natural suits
+    for suit_key in SUITS:
+        if natural_suit_counts[suit_key] == 0:
+            features["num_suits_void_natural"] += 1
+    # is_void_in_suit_X is already correctly set
+
+    # Calculate longest and shortest offsuit (natural suits that are not trump)
+    max_len = 0
+    min_len = 5 # Start with max hand size
+    found_an_offsuit = False
+
+    for s in SUITS:
+        # An "offsuit" for this calculation is a natural suit that is NOT the trump suit.
+        # The Left Bower's natural suit is also considered "trump" for this purpose.
+        is_suit_effectively_trump = (trump_suit and (s == trump_suit or s == left_bower_actual_suit))
+
+        if not is_suit_effectively_trump:
+            found_an_offsuit = True
+            current_suit_len = natural_suit_counts[s]
+            if current_suit_len > max_len:
+                max_len = current_suit_len
+            if current_suit_len < min_len:
+                min_len = current_suit_len
+
+    # max_len, min_len, found_an_offsuit are calculated above based on current trump_suit (if any)
+
+    if trump_suit is None:
+        # If no trump suit, all suits are considered for longest/shortest.
+        # This overrides the previous loop's context which assumed a trump suit might exist.
+        if not hand:
+            features["num_cards_in_longest_offsuit"] = 0
+            features["shortest_offsuit_length"] = 0
+        else:
+            all_natural_lengths = [natural_suit_counts[s_key] for s_key in SUITS]
+            features["num_cards_in_longest_offsuit"] = max(all_natural_lengths) if all_natural_lengths else 0
+            features["shortest_offsuit_length"] = min(all_natural_lengths) if all_natural_lengths else 0
+    else:
+        # Trump suit is defined. Use max_len and min_len calculated from non-trump suits.
+        if found_an_offsuit:
+            features["num_cards_in_longest_offsuit"] = max_len
+            features["shortest_offsuit_length"] = min_len
+        else: # No offsuits found (e.g., all trump hand or hand is empty)
+            features["num_cards_in_longest_offsuit"] = 0
+            features["shortest_offsuit_length"] = 0
+            if not hand: # ensure for empty hand, it's explicitly 0, though covered by initial check
+                 features["num_suits_void_natural"] = 4
+
+
+    return features
+
 def evaluate_potential_trump_strength(hand, potential_trump_suit, game_data=None):
+    # This function can now leverage get_hand_features if desired,
+    # or be kept separate for its specific scoring logic.
+    # For now, keeping it separate as it calculates a "score" rather than discrete features.
     if not potential_trump_suit: return 0
     strength_score = 0; num_trump_cards = 0; has_right_bower = False; has_left_bower = False
     for card in hand:
@@ -696,6 +889,8 @@ def process_ai_play_card(ai_player_idx):
         try:
             ai_hand.remove(actual_card_to_remove_from_hand)
             logging.info(f"AI P{ai_player_idx} successfully removed {str(actual_card_to_remove_from_hand)} from hand.")
+            # Record the played card for round tracking
+            game_data.get("played_cards_this_round", []).append(actual_card_to_remove_from_hand) # Use the actual card object removed
         except ValueError:
             logging.error(f"CRITICAL: Failed to remove {str(actual_card_to_remove_from_hand)} from AI P{ai_player_idx}'s hand. Hand: {[str(c) for c in ai_hand]}")
             return # Avoid proceeding with inconsistent state
@@ -1279,7 +1474,10 @@ def submit_action_api():
             lead_suit_name = SUITS_MAP.get(game_data["current_trick_lead_suit"]) if game_data["current_trick_lead_suit"] else ""
             required_suit_msg = f"Must follow suit ({lead_suit_name})." if game_data["current_trick_lead_suit"] and any(c.suit == game_data["current_trick_lead_suit"] for c in player_hand) else "Invalid play."
             return jsonify({"error": f"Invalid play. {required_suit_msg}"}), 400
+
         player_hand.remove(played_card)
+        game_data.get("played_cards_this_round", []).append(played_card) # Record played card
+
         game_data["trick_cards"].append({'player': player_idx, 'card': played_card})
         game_data["message"] = f"{game_data['player_identities'][player_idx]} played {str(played_card)}."
         if not game_data["current_trick_lead_suit"]: game_data["current_trick_lead_suit"] = get_effective_suit(played_card, game_data["trump_suit"])
