@@ -2036,7 +2036,7 @@ if __name__ == "__main__":
         logging.info(f"Training simulation finished for {num_games_to_simulate} games. Q-values are stored in {Q_TABLE_DB_FILE}.")
 
     # Example of how to run it (e.g. for 10 iterations as requested for testing)
-    run_training_simulation(10, save_interval=5) # save_interval is no longer used with SQLite
+    run_training_simulation(10000, save_interval=5) # save_interval is no longer used with SQLite
 
     # To migrate existing q_table.json to SQLite (run once):
     # migrate_json_to_sqlite()
