@@ -1870,6 +1870,8 @@ def game_data_to_json(current_game_data_arg): # Renamed arg for clarity
     if json_safe_data.get('trick_cards'): json_safe_data['trick_cards'] = [{'player': tc['player'], 'card': tc['card'].to_dict()} for tc in json_safe_data['trick_cards']]
     if json_safe_data.get('last_completed_trick') and json_safe_data['last_completed_trick'].get('played_cards'):
         json_safe_data['last_completed_trick']['played_cards'] = [{'player': pc['player'], 'card': pc['card'].to_dict() if isinstance(pc['card'], Card) else pc['card']} for pc in json_safe_data['last_completed_trick']['played_cards']]
+    if json_safe_data.get('played_cards_this_round'):
+        json_safe_data['played_cards_this_round'] = [card.to_dict() for card in json_safe_data['played_cards_this_round']]
     return json_safe_data
 
 if __name__ == "__main__":
