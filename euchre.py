@@ -307,17 +307,17 @@ def initialize_game_data():
 
     # Define initial game_data structure first
     num_players = 3 # Default, can be adjusted if game structure changes
-    player_identities = {0: "Player 1 (You)", 1: "Player 2 (AI)", 2: "Player 3 (AI)"}
+    player_identities = {0: "Player 0 (AI)", 1: "Player 1 (AI)", 2: "Player 2 (AI)"} # Player 0 is now AI
 
     # Initialize RL agents based on player_identities
     # This ensures agents are created once when the application starts or state is wiped.
     # And their Q-tables are loaded.
     if not rl_agents: # Only create new agent instances if rl_agents is empty
         for pid, name in player_identities.items():
-            if "AI" in name and pid != 0: # Assuming player 0 is human
-                if pid not in rl_agents:
-                    logging.info(f"Creating RLAgent for player {pid}")
-                    rl_agents[pid] = RLAgent(player_id=pid)
+            # Create RLAgent for all players, as all are AI now.
+            if pid not in rl_agents: # Check if agent for this pid already exists
+                logging.info(f"Creating RLAgent for player {pid} ({name})")
+                rl_agents[pid] = RLAgent(player_id=pid)
 
     # Reset epsilon for agents at the start of each new game (full reset of game_data)
     # This is important for consistent training sessions.
@@ -1717,130 +1717,33 @@ if __name__ == "__main__":
 
                     logging.debug(f"Game {game_num}, R{round_num}, Phase: {current_phase}, Turn: P{current_player_id}")
 
-                    if current_player_id != 0: # AI Player's turn
-                        if current_phase == "bidding_round_1":
-                            process_ai_bid_action({'player_index': current_player_id, 'action': 'ai_bidding_round_1'})
-                        elif current_phase == "bidding_round_2":
-                            process_ai_bid_action({'player_index': current_player_id, 'action': 'ai_bidding_round_2'})
-                        elif current_phase == "dealer_must_call":
-                             process_ai_bid_action({'player_index': current_player_id, 'action': 'ai_dealer_stuck_call'})
-                        elif current_phase == "prompt_go_alone":
-                            ai_decide_go_alone_and_proceed(current_player_id)
-                        elif current_phase == "playing_tricks":
-                            process_ai_play_card(current_player_id)
-                        elif current_phase == "maker_discard": # AI Maker discarding 5 cards
-                            # This is handled by ai_decide_go_alone_and_proceed if not going alone.
-                            # If somehow AI is in this phase directly, call discard logic.
-                            if game_data["maker"] == current_player_id and game_data["cards_to_discard_count"] == 5:
-                                ai_discard_five_cards(current_player_id)
-                        elif current_phase in ["dealer_discard_one", "dealer_must_discard_after_order_up"]: # AI Dealer discarding 1
-                             # This is handled by order_up logic if AI dealer.
-                             # If AI dealer is here directly, it's likely a state error or needs specific handling.
-                             # For now, assume primary flows cover AI discard.
-                             pass
-                        else:
-                            logging.error(f"Training Loop: AI P{current_player_id} in UNHANDLED phase {current_phase} for game {game_num}. Aborting this game.")
-                            game_data["message"] = f"AI P{current_player_id} entered unhandled phase {current_phase}. Game {game_num} aborted."
-                            # Force the current game to end and allow the simulation to proceed to the next game.
-                            game_over_flag = True
-                            round_over_flag = True # Ensure exit from inner while loop as well
-
-
-                    else: # Player 0 (Human) - automate for simulation
-                        logging.debug(f"Training Loop: Simulating P0 (Human) turn in phase {current_phase}")
-                        if current_phase == "bidding_round_1":
-                            # Simulate P0: pass for simplicity in training AI for now
-                            game_data['passes_on_upcard'].append(0)
-                            game_data["message"] = f"{game_data['player_identities'][0]} (Simulated) passes."
-                            if len(game_data['passes_on_upcard']) == game_data["num_players"]:
-                                game_data["game_phase"] = "bidding_round_2"; game_data["up_card_visible"] = False
-                                game_data["current_player_turn"] = (game_data["dealer"] + 1) % game_data["num_players"]
-                            else:
-                                bid_order = [(game_data["dealer"] + i + 1) % game_data["num_players"] for i in range(game_data["num_players"])]
-                                game_data["current_player_turn"] = bid_order[(bid_order.index(0) + 1) % game_data["num_players"]]
-
-                        elif current_phase == "bidding_round_2":
-                            # Simulate P0: pass
-                            game_data['passes_on_calling'].append(0)
-                            game_data["message"] = f"{game_data['player_identities'][0]} (Simulated) passes."
-                            bid_order_r2 = [(game_data["dealer"] + i + 1) % game_data["num_players"] for i in range(game_data["num_players"])]
-                            if len(game_data['passes_on_calling']) == game_data["num_players"] -1 and game_data["dealer"] not in game_data["passes_on_calling"]:
-                                game_data["current_player_turn"] = game_data["dealer"]; game_data["game_phase"] = "dealer_must_call"
-                            else:
-                                game_data["current_player_turn"] = bid_order_r2[(bid_order_r2.index(0) + 1) % game_data["num_players"]]
-
-                        elif current_phase == "dealer_must_call" and game_data["dealer"] == 0:
-                            # Simulate P0: call first available suit
-                            turned_down = game_data["original_up_card_for_round"].suit
-                            suit_to_call = next(s for s in SUITS if s != turned_down)
-                            game_data["trump_suit"] = suit_to_call; game_data["maker"] = 0
-                            game_data["game_phase"] = "prompt_go_alone"; game_data["current_player_turn"] = 0
-
-                        elif current_phase == "prompt_go_alone" and game_data["maker"] == 0:
-                            # Simulate P0: don't go alone
-                            game_data["going_alone"] = False
-                            if game_data.get("dummy_hand") and len(game_data["dummy_hand"]) == 5 :
-                                game_data["hands"][0].extend(game_data["dummy_hand"]); game_data["dummy_hand"] = []
-                                game_data["cards_to_discard_count"] = 5; game_data["game_phase"] = "maker_discard"
-                            else: transition_to_play_phase()
-
-                        elif current_phase == "maker_discard" and game_data["maker"] == 0:
-                            # Simulate P0: discard using heuristic
-                            to_discard = get_ai_cards_to_discard(list(game_data["hands"][0]), 5, game_data["trump_suit"])
-                            for card_obj in to_discard: # remove from hand
-                                actual_card = next((c for c in game_data["hands"][0] if c.rank == card_obj.rank and c.suit == card_obj.suit), None)
-                                if actual_card: game_data["hands"][0].remove(actual_card)
-                            transition_to_play_phase()
-
-                        elif current_phase in ["dealer_discard_one", "dealer_must_discard_after_order_up"] and game_data["dealer"] == 0:
-                             # Simulate P0: discard using heuristic (1 card)
-                            to_discard = get_ai_cards_to_discard(list(game_data["hands"][0]), 1, game_data["trump_suit"])
-                            if to_discard:
-                                actual_card = next((c for c in game_data["hands"][0] if c.rank == to_discard[0].rank and c.suit == to_discard[0].suit), None)
-                                if actual_card: game_data["hands"][0].remove(actual_card)
-
-                            game_data["game_phase"] = "prompt_go_alone"
-                            game_data["current_player_turn"] = game_data["maker"] # Maker decides go alone next
-                            if game_data["maker"] != 0: # If AI is maker
-                                ai_decide_go_alone_and_proceed(game_data["maker"])
-
-
-                        elif current_phase == "playing_tricks":
-                            # Simulate P0: play first valid card
-                            p0_hand = game_data["hands"][0]
-                            logging.debug(f"P0 hand before get_valid_plays: {[str(c) for c in p0_hand]}")
-                            if not p0_hand: # If P0 hand is empty but it's their turn to play.
-                                logging.error(f"Training Loop: P0 (Human Sim) turn in 'playing_tricks' but hand is empty. Hand: {p0_hand}. Round tricks: {game_data['round_tricks_won']}. Total tricks: {sum(game_data['round_tricks_won'].values())}")
-                                # This likely means the round should have already ended.
-                                round_over_flag = True
-                                break # Break from this player's turn processing in the while loop.
-
-                            valid_plays_p0 = get_valid_plays(p0_hand, game_data["current_trick_lead_suit"], game_data["trump_suit"])
-                            if valid_plays_p0:
-                                card_played_p0 = valid_plays_p0[0]
-                                p0_hand.remove(card_played_p0)
-                                game_data["trick_cards"].append({'player': 0, 'card': card_played_p0})
-                                if not game_data["current_trick_lead_suit"]: game_data["current_trick_lead_suit"] = get_effective_suit(card_played_p0, game_data["trump_suit"])
-
-                                if len(game_data["trick_cards"]) == game_data["num_players"]:
-                                    winner_idx = determine_trick_winner(game_data["trick_cards"], game_data["trump_suit"], game_data["current_trick_lead_suit"])
-                                    game_data["round_tricks_won"][winner_idx] += 1
-                                    # RL Update for AI players after P0 completes trick
-                                    trick_event_data = {"trick_winner_idx": winner_idx}
-                                    for p_id_ai in rl_agents.keys():
-                                        if game_data["rl_training_data"].get(p_id_ai) and game_data["rl_training_data"][p_id_ai].get("action_type") == "play_card":
-                                            process_rl_update(p_id_ai, "trick_end", event_data=trick_event_data)
-                                    game_data["trick_cards"] = []; game_data["current_trick_lead_suit"] = None
-                                    game_data["current_player_turn"] = winner_idx
-                                    if is_round_over(): score_round() # score_round handles its RL updates
-                                else:
-                                    game_data["current_player_turn"] = (0 + 1) % game_data["num_players"]
-                            else: # No valid cards for P0 - should not happen
-                                logging.error("Training Loop: P0 has no valid cards to play. Game state error.")
-                                round_over_flag = True # End round to prevent infinite loop
-                        else:
-                            logging.warning(f"Training Loop: P0 (Human Sim) in unhandled phase {current_phase}. Turn advanced.")
-                            game_data["current_player_turn"] = (current_player_id + 1) % game_data["num_players"]
+                    # All players are now AI and will be handled by the same logic block.
+                    if current_phase == "bidding_round_1":
+                        process_ai_bid_action({'player_index': current_player_id, 'action': 'ai_bidding_round_1'})
+                    elif current_phase == "bidding_round_2":
+                        process_ai_bid_action({'player_index': current_player_id, 'action': 'ai_bidding_round_2'})
+                    elif current_phase == "dealer_must_call":
+                            process_ai_bid_action({'player_index': current_player_id, 'action': 'ai_dealer_stuck_call'})
+                    elif current_phase == "prompt_go_alone":
+                        ai_decide_go_alone_and_proceed(current_player_id)
+                    elif current_phase == "playing_tricks":
+                        process_ai_play_card(current_player_id)
+                    elif current_phase == "maker_discard": # AI Maker discarding 5 cards
+                        # This is handled by ai_decide_go_alone_and_proceed if not going alone.
+                        # If somehow AI is in this phase directly, call discard logic.
+                        if game_data["maker"] == current_player_id and game_data["cards_to_discard_count"] == 5:
+                            ai_discard_five_cards(current_player_id)
+                    elif current_phase in ["dealer_discard_one", "dealer_must_discard_after_order_up"]: # AI Dealer discarding 1
+                            # This is handled by order_up logic if AI dealer.
+                            # If AI dealer is here directly, it's likely a state error or needs specific handling.
+                            # For now, assume primary flows cover AI discard.
+                            pass
+                    else:
+                        logging.error(f"Training Loop: AI P{current_player_id} in UNHANDLED phase {current_phase} for game {game_num}. Aborting this game.")
+                        game_data["message"] = f"AI P{current_player_id} entered unhandled phase {current_phase}. Game {game_num} aborted."
+                        # Force the current game to end and allow the simulation to proceed to the next game.
+                        game_over_flag = True
+                        round_over_flag = True # Ensure exit from inner while loop as well
 
                     # Check for state consistency or errors that might stall the game
                     if game_data["game_phase"] == current_phase and game_data["current_player_turn"] == current_player_id and not game_over_flag and not round_over_flag :
@@ -1875,7 +1778,7 @@ if __name__ == "__main__":
         logging.info(f"Training simulation finished for {num_games_to_simulate} games. Q-values are stored in {Q_TABLE_DB_FILE}.")
 
     # Example of how to run it (e.g. for 10 iterations as requested for testing)
-    run_training_simulation(10000, save_interval=5) # save_interval is no longer used with SQLite
+    run_training_simulation(10, save_interval=5) # save_interval is no longer used with SQLite
 
     # To migrate existing q_table.json to SQLite (run once):
     # migrate_json_to_sqlite()
