@@ -1932,10 +1932,68 @@ if __name__ == "__main__":
                         if game_data["maker"] == current_player_id and game_data["cards_to_discard_count"] == 5:
                             ai_discard_five_cards(current_player_id)
                     elif current_phase in ["dealer_discard_one", "dealer_must_discard_after_order_up"]: # AI Dealer discarding 1
-                            # This is handled by order_up logic if AI dealer.
-                            # If AI dealer is here directly, it's likely a state error or needs specific handling.
-                            # For now, assume primary flows cover AI discard.
-                            pass
+                        # This is the fix for the infinite loop.
+                        # All players are AI in the simulation. If P0 is dealer, this applies.
+                        if current_player_id == game_data["dealer"]: # Redundant check as phase implies dealer's turn, but good for safety
+                            logging.info(f"AI Dealer P{current_player_id} in phase {current_phase}. Needs to discard.")
+                            dealer_hand = game_data["hands"][current_player_id]
+                            trump_suit = game_data["trump_suit"]
+
+                            if not dealer_hand:
+                                logging.error(f"CRITICAL: AI Dealer P{current_player_id} has empty hand in {current_phase}.")
+                                # Attempt to recover or break, for now, log and let it error out if it causes issues.
+                            elif not trump_suit:
+                                logging.error(f"CRITICAL: Trump suit not set for AI Dealer P{current_player_id} discard in {current_phase}.")
+                                # This is a critical state error.
+                            else:
+                                cards_to_discard = get_ai_cards_to_discard(list(dealer_hand), 1, trump_suit)
+                                if cards_to_discard:
+                                    card_to_discard_obj = cards_to_discard[0]
+                                    try:
+                                        # Find the actual card object in hand to remove
+                                        actual_card_to_remove = next(c for c in dealer_hand if c.suit == card_to_discard_obj.suit and c.rank == card_to_discard_obj.rank)
+                                        dealer_hand.remove(actual_card_to_remove)
+                                        game_data["message"] = f"{game_data['player_identities'][current_player_id]} (AI Dealer) discarded {str(actual_card_to_remove)}."
+                                        logging.info(f"AI Dealer P{current_player_id} discarded {str(actual_card_to_remove)}. Hand size: {len(dealer_hand)}.")
+                                    except (ValueError, StopIteration):
+                                        logging.error(f"AI Dealer P{current_player_id} failed to find/remove card {str(card_to_discard_obj)} from hand for discard. Hand: {[str(c) for c in dealer_hand]}")
+                                        # Fallback: remove first card if specific one not found
+                                        if dealer_hand:
+                                            fallback_discard = dealer_hand.pop(0)
+                                            logging.warning(f"AI Dealer P{current_player_id} discarded {str(fallback_discard)} by fallback due to removal error.")
+                                            game_data["message"] = f"{game_data['player_identities'][current_player_id]} (AI Dealer) discarded {str(fallback_discard)} (fallback)."
+
+
+                                    game_data["game_phase"] = "prompt_go_alone"
+                                    game_data["current_player_turn"] = game_data["maker"]
+                                    game_data["cards_to_discard_count"] = 0 # Reset discard count
+                                    logging.info(f"AI Dealer P{current_player_id} discard complete. Phase -> 'prompt_go_alone'. Turn for P{game_data['maker']} (Maker).")
+
+                                    # If the maker (who is next) is also an AI, their logic needs to be triggered for 'prompt_go_alone'.
+                                    # The main loop will pick this up in the next iteration.
+                                    # If maker is AI, ai_decide_go_alone_and_proceed will be called.
+                                    if game_data["maker"] != 0 : # Assuming P0 is human if ID is 0. In pure AI sim, all are AI.
+                                        # The next loop iteration will handle ai_decide_go_alone_and_proceed.
+                                        pass
+                                else:
+                                    logging.error(f"AI Dealer P{current_player_id} (hand: {[str(c) for c in dealer_hand]}) failed to select card to discard in {current_phase}. Trump: {trump_suit}. Hand size: {len(dealer_hand)}")
+                                    # This could still lead to a loop if not handled, but less likely than 'pass'.
+                                    # Forcing a discard of the first card if selection fails.
+                                    if dealer_hand:
+                                        fallback_discard = dealer_hand.pop(0)
+                                        logging.warning(f"AI Dealer P{current_player_id} discarded {str(fallback_discard)} by fallback due to selection error.")
+                                        game_data["message"] = f"{game_data['player_identities'][current_player_id]} (AI Dealer) discarded {str(fallback_discard)} (fallback)."
+                                        game_data["game_phase"] = "prompt_go_alone"
+                                        game_data["current_player_turn"] = game_data["maker"]
+                                        game_data["cards_to_discard_count"] = 0
+                                        logging.info(f"AI Dealer P{current_player_id} fallback discard complete. Phase -> 'prompt_go_alone'. Turn for P{game_data['maker']} (Maker).")
+
+                        else:
+                            # This case should ideally not be hit if current_player_id is always the dealer in these phases.
+                            logging.warning(f"Phase is {current_phase} but current player P{current_player_id} is not dealer P{game_data['dealer']}. Skipping discard logic.")
+                            # To prevent potential loops if this state is erroneous, advance turn or phase carefully.
+                            # For now, this will rely on outer loop checks or subsequent logic to resolve.
+                            pass # Let the loop continue, hoping for resolution or timeout.
                     else:
                         logging.error(f"Training Loop: AI P{current_player_id} in UNHANDLED phase {current_phase} for game {game_num}. Aborting this game.")
                         game_data["message"] = f"AI P{current_player_id} entered unhandled phase {current_phase}. Game {game_num} aborted."
