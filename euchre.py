@@ -30,7 +30,7 @@ REWARD_FAILED_BID = -2    # e.g. if bid and got euchred
 DEFAULT_LEARNING_RATE = 0.1
 DEFAULT_DISCOUNT_FACTOR = 0.9
 DEFAULT_EPSILON = 1.0 # Initial exploration rate
-EPSILON_DECAY = 0.995
+EPSILON_DECAY = 0.99995 # Slowed down decay
 MIN_EPSILON = 0.01
 
 class RLAgent:
@@ -276,7 +276,7 @@ def get_rl_state(player_id, current_game_data):
         # Playing specific
         "current_trick_lead_suit": current_game_data.get("current_trick_lead_suit"),
         "trick_cards_played_count": len(current_game_data.get("trick_cards", [])),
-        # "cards_in_current_trick": [(tc['player'], tc['card'].to_dict()) for tc in current_game_data.get("trick_cards", [])], # Too complex for now
+        "cards_in_current_trick": [{'player': tc['player'], 'card': tc['card'].to_dict()} for tc in current_game_data.get("trick_cards", [])],
         "trick_leader": current_game_data.get("trick_leader"),
 
         # Scores and round progress
