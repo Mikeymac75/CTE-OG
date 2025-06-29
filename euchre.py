@@ -376,7 +376,11 @@ def initialize_game_data():
 
     # Define initial game_data structure first
     num_players = 3 # Default, can be adjusted if game structure changes
-    player_identities = {0: "Player 0 (AI)", 1: "Player 1 (AI)", 2: "Player 2 (AI)"} # Player 0 is now AI
+    player_identities = {
+        0: "Player 0 (You)", # Human player
+        1: "Player 1 (AI)",
+        2: "Player 2 (AI)"
+    }
 
     # Initialize RL agents based on player_identities
     # This ensures agents are created once when the application starts or state is wiped.
@@ -875,7 +879,7 @@ def process_ai_play_card(ai_player_idx):
             logging.info(f"Found card {str(actual_card_to_remove_from_hand)} by value in hand.")
         else: # Still not found, this is a bigger issue.
             logging.error(f"AI P{ai_player_idx} CRITICALLY tried to play {str(target_card_val)} but not found in hand by value: {[str(c) for c in ai_hand]}. Playing first valid from list as last resort.")
-            if valid_cards:
+            if valid_cards: # valid_cards was defined in the RL Agent Logic block or fallback
                 card_to_play = valid_cards[0]
                 actual_card_to_remove_from_hand = next((c for c in ai_hand if c.suit == card_to_play.suit and c.rank == card_to_play.rank), None)
                 if not actual_card_to_remove_from_hand: # If even the first valid card isn't in hand, something is deeply wrong
@@ -898,7 +902,8 @@ def process_ai_play_card(ai_player_idx):
         logging.error(f"CRITICAL: AI P{ai_player_idx} somehow has no actual_card_to_remove_from_hand. Chosen: {str(card_to_play)}. Hand: {[str(c) for c in ai_hand]}"); return
 
     game_data["trick_cards"].append({'player': ai_player_idx, 'card': card_to_play}) # Use the card object that was chosen and confirmed in hand
-    game_data["message"] = f"{game_data['player_identities'][ai_player_idx]} (AI) played {str(card_to_play)}."
+    # Message now directly uses player_identities which includes "(AI)" or "(You)"
+    game_data["message"] = f"{game_data['player_identities'][ai_player_idx]} played {str(card_to_play)}."
 
     # Set current_trick_lead_suit if it's not set (i.e., this is the first card of the trick)
     if not game_data["current_trick_lead_suit"]:
