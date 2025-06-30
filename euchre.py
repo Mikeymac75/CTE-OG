@@ -631,44 +631,44 @@ def initialize_new_round():
     current_game_data = game.game_data # Work with the game_data from the instance
 
     logging.info(f"Initializing new round. Current dealer: {current_game_data.get('dealer', 'N/A')}")
-    game_data["deck"] = create_deck()
-    random.shuffle(game_data["deck"])
-    player_hands = {i: [] for i in range(game_data["num_players"])}
+    current_game_data["deck"] = create_deck()
+    random.shuffle(current_game_data["deck"])
+    player_hands = {i: [] for i in range(current_game_data["num_players"])}
     for _ in range(5):
-        for i in range(game_data["num_players"]):
-            if game_data["deck"]:
-                player_hands[i].append(game_data["deck"].pop())
+        for i in range(current_game_data["num_players"]):
+            if current_game_data["deck"]:
+                player_hands[i].append(current_game_data["deck"].pop())
             else:
-                game_data["message"] = "Error: Not enough cards for player hands."; return
-    game_data["hands"] = player_hands
-    game_data["dummy_hand"] = []
+                current_game_data["message"] = "Error: Not enough cards for player hands."; return
+    current_game_data["hands"] = player_hands
+    current_game_data["dummy_hand"] = []
     for _ in range(5):
-        if game_data["deck"]:
-            game_data["dummy_hand"].append(game_data["deck"].pop())
+        if current_game_data["deck"]:
+            current_game_data["dummy_hand"].append(current_game_data["deck"].pop())
         else:
-            game_data["message"] = "Error: Not enough cards for dummy hand."; return
-    if not game_data["deck"]: game_data["message"] = "Error: Not enough for up_card."; return
-    game_data["up_card"] = game_data["deck"].pop()
-    game_data["original_up_card_for_round"] = game_data["up_card"]
-    if "kitty" in game_data: del game_data["kitty"]
-    game_data["up_card_visible"] = True
-    game_data["trump_suit"] = None
-    game_data["maker"] = None
-    game_data["going_alone"] = False
-    game_data["trick_cards"] = []
-    game_data["current_trick_lead_suit"] = None
-    game_data["round_tricks_won"] = {i: 0 for i in range(game_data["num_players"])}
-    game_data["dealer"] = int(game_data["dealer"])
-    game_data["current_player_turn"] = (game_data["dealer"] + 1) % game_data["num_players"]
-    game_data["trick_leader"] = game_data["current_player_turn"]
-    game_data["game_phase"] = "bidding_round_1"
-    game_data["passes_on_upcard"] = []
-    game_data["passes_on_calling"] = []
-    game_data["cards_to_discard_count"] = 0
-    game_data["last_completed_trick"] = None
-    game_data["played_cards_this_round"] = [] # Initialize played cards for the new round
-    game_data["message"] = f"{game_data['player_identities'][game_data['current_player_turn']]}'s turn. Up-card: {str(game_data['up_card'])}."
-    logging.info(f"New round initialized. Up-card: {str(game_data['up_card']) if game_data['up_card'] else 'N/A'}. Turn: P{game_data['current_player_turn']}. Phase: {game_data['game_phase']}")
+            current_game_data["message"] = "Error: Not enough cards for dummy hand."; return
+    if not current_game_data["deck"]: current_game_data["message"] = "Error: Not enough for up_card."; return
+    current_game_data["up_card"] = current_game_data["deck"].pop()
+    current_game_data["original_up_card_for_round"] = current_game_data["up_card"]
+    if "kitty" in current_game_data: del current_game_data["kitty"]
+    current_game_data["up_card_visible"] = True
+    current_game_data["trump_suit"] = None
+    current_game_data["maker"] = None
+    current_game_data["going_alone"] = False
+    current_game_data["trick_cards"] = []
+    current_game_data["current_trick_lead_suit"] = None
+    current_game_data["round_tricks_won"] = {i: 0 for i in range(current_game_data["num_players"])}
+    current_game_data["dealer"] = int(current_game_data["dealer"])
+    current_game_data["current_player_turn"] = (current_game_data["dealer"] + 1) % current_game_data["num_players"]
+    current_game_data["trick_leader"] = current_game_data["current_player_turn"]
+    current_game_data["game_phase"] = "bidding_round_1"
+    current_game_data["passes_on_upcard"] = []
+    current_game_data["passes_on_calling"] = []
+    current_game_data["cards_to_discard_count"] = 0
+    current_game_data["last_completed_trick"] = None
+    current_game_data["played_cards_this_round"] = [] # Initialize played cards for the new round
+    current_game_data["message"] = f"{current_game_data['player_identities'][current_game_data['current_player_turn']]}'s turn. Up-card: {str(current_game_data['up_card'])}."
+    logging.info(f"New round initialized. Up-card: {str(current_game_data['up_card']) if current_game_data['up_card'] else 'N/A'}. Turn: P{current_game_data['current_player_turn']}. Phase: {current_game_data['game_phase']}")
 
 def get_left_bower_suit(trump_suit_char):
     if trump_suit_char not in SUITS_MAP: return None
