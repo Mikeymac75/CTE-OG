@@ -391,46 +391,46 @@ def get_rl_state(player_id, current_game_data):
     player_id: The ID of the AI player for whom the state is being constructed.
     current_game_data_dict: The game_data dictionary from the Game instance.
     """
-    # This function now expects current_game_data_dict to be passed,
+    # This function now expects current_game_data to be passed,
     # which is game.game_data from the calling context.
-    hand = current_game_data_dict["hands"].get(player_id, [])
+    hand = current_game_data["hands"].get(player_id, [])
     hand_serialized = sorted([card.to_dict() for card in hand], key=lambda c: (c['suit'], c['rank']))
 
-    up_card_dict = current_game_data_dict.get("up_card")
-    original_up_card_dict = current_game_data_dict.get("original_up_card_for_round")
+    up_card_dict = current_game_data.get("up_card")
+    original_up_card_dict = current_game_data.get("original_up_card_for_round")
 
     state = {
         "player_id": player_id,
-        "game_phase": current_game_data_dict.get("game_phase"),
-        "trump_suit": current_game_data_dict.get("trump_suit"),
-        "dealer": current_game_data_dict.get("dealer"),
-        "maker": current_game_data_dict.get("maker"),
-        "current_player_turn": current_game_data_dict.get("current_player_turn"),
+        "game_phase": current_game_data.get("game_phase"),
+        "trump_suit": current_game_data.get("trump_suit"),
+        "dealer": current_game_data.get("dealer"),
+        "maker": current_game_data.get("maker"),
+        "current_player_turn": current_game_data.get("current_player_turn"),
 
         "hand": [c['suit'] + c['rank'] for c in hand_serialized],
 
         # Bidding specific
-        "up_card_suit": up_card_dict.suit if up_card_dict and current_game_data_dict.get("up_card_visible") else None,
-        "up_card_rank": up_card_dict.rank if up_card_dict and current_game_data_dict.get("up_card_visible") else None,
+        "up_card_suit": up_card_dict.suit if up_card_dict and current_game_data.get("up_card_visible") else None,
+        "up_card_rank": up_card_dict.rank if up_card_dict and current_game_data.get("up_card_visible") else None,
         "original_up_card_suit": original_up_card_dict.suit if original_up_card_dict else None,
-        "passes_on_upcard": len(current_game_data_dict.get("passes_on_upcard", [])),
-        "passes_on_calling": len(current_game_data_dict.get("passes_on_calling", [])),
+        "passes_on_upcard": len(current_game_data.get("passes_on_upcard", [])),
+        "passes_on_calling": len(current_game_data.get("passes_on_calling", [])),
 
         # Playing specific
-        "current_trick_lead_suit": current_game_data_dict.get("current_trick_lead_suit"),
-        "trick_cards_played_count": len(current_game_data_dict.get("trick_cards", [])),
-        "trick_leader": current_game_data_dict.get("trick_leader"),
+        "current_trick_lead_suit": current_game_data.get("current_trick_lead_suit"),
+        "trick_cards_played_count": len(current_game_data.get("trick_cards", [])),
+        "trick_leader": current_game_data.get("trick_leader"),
 
         # Scores and round progress
-        "my_score": current_game_data_dict["scores"].get(player_id, 0),
-        "my_round_tricks": current_game_data_dict["round_tricks_won"].get(player_id, 0),
+        "my_score": current_game_data["scores"].get(player_id, 0),
+        "my_round_tricks": current_game_data["round_tricks_won"].get(player_id, 0),
 
-        "player_role": get_player_role(player_id, current_game_data_dict.get("dealer"), current_game_data_dict.get("maker"), current_game_data_dict.get("num_players")),
-        "going_alone": current_game_data_dict.get("going_alone", False)
+        "player_role": get_player_role(player_id, current_game_data.get("dealer"), current_game_data.get("maker"), current_game_data.get("num_players")),
+        "going_alone": current_game_data.get("going_alone", False)
     }
 
-    current_trump_for_features = current_game_data_dict.get("trump_suit")
-    hand_card_objects = current_game_data_dict["hands"].get(player_id, [])
+    current_trump_for_features = current_game_data.get("trump_suit")
+    hand_card_objects = current_game_data["hands"].get(player_id, [])
     calculated_features = get_hand_features(hand_card_objects, current_trump_for_features)
     for feature_name, feature_value in calculated_features.items():
         state[f"feat_{feature_name}"] = feature_value
@@ -447,7 +447,7 @@ def get_rl_state(player_id, current_game_data):
         potential_trump_features = get_hand_features(hand_card_objects, state["up_card_suit"])
         for f_name, f_val in potential_trump_features.items():
             state[f"potential_trump_{state['up_card_suit']}_{f_name}"] = f_val
-        state[f"eval_strength_as_trump_{state['up_card_suit']}"] = evaluate_potential_trump_strength(hand_card_objects, state["up_card_suit"], current_game_data_dict) # Pass game_data for context if needed by eval
+        state[f"eval_strength_as_trump_{state['up_card_suit']}"] = evaluate_potential_trump_strength(hand_card_objects, state["up_card_suit"], current_game_data) # Pass game_data for context if needed by eval
 
     elif state["game_phase"] == "bidding_round_2":
         # Evaluate features and strength for all other possible trump suits
@@ -456,10 +456,10 @@ def get_rl_state(player_id, current_game_data):
                 potential_trump_features_r2 = get_hand_features(hand_card_objects, s_option)
                 for f_name, f_val in potential_trump_features_r2.items():
                     state[f"potential_trump_{s_option}_{f_name}"] = f_val
-                state[f"eval_strength_as_trump_{s_option}"] = evaluate_potential_trump_strength(hand_card_objects, s_option, current_game_data_dict) # Pass game_data for context
+                state[f"eval_strength_as_trump_{s_option}"] = evaluate_potential_trump_strength(hand_card_objects, s_option, current_game_data) # Pass game_data for context
 
     # Add played card information to the state
-    played_cards_in_round = current_game_data_dict.get("played_cards_this_round", [])
+    played_cards_in_round = current_game_data.get("played_cards_this_round", [])
     state["played_cards_serialized"] = sorted([f"{c.suit}{c.rank}" for c in played_cards_in_round])
 
     # Initialize specific flags/counts for played cards, relative to current trump
@@ -472,7 +472,7 @@ def get_rl_state(player_id, current_game_data):
     for s_key in SUITS:
         state[f"num_suit_played_{s_key}"] = 0
 
-    current_trump_suit = current_game_data_dict.get("trump_suit")
+    current_trump_suit = current_game_data.get("trump_suit")
     if current_trump_suit: # Only calculate these if trump is set
         left_bower_actual_suit = get_left_bower_suit(current_trump_suit)
         for card in played_cards_in_round:
