@@ -1,20 +1,20 @@
 document.addEventListener('DOMContentLoaded', () => {
     // --- DOM Elements ---
-    const player1HandDiv = document.getElementById('player-1-hand');
-    const player2HandDiv = document.getElementById('player-2-hand');
-    const player3HandDiv = document.getElementById('player-3-hand');
-    const kittyDisplayDiv = document.getElementById('kitty-display');
+    const player0YouHandDiv = document.getElementById('player-0-you-hand');
+    const player1AiHandDiv = document.getElementById('player-1-ai-hand');
+    const player2AiHandDiv = document.getElementById('player-2-ai-hand');
+    const kittyDisplayDiv = document.getElementById('kitty-display'); // This ID does not exist in HTML, but keeping var for now
     const upCardDisplaySpan = document.getElementById('up-card-display');
     const trumpSuitSpan = document.getElementById('trump-suit');
     const gameMessageP = document.getElementById('game-message');
+    const scorePlayer0Span = document.getElementById('score-player-0');
     const scorePlayer1Span = document.getElementById('score-player-1');
     const scorePlayer2Span = document.getElementById('score-player-2');
-    const scorePlayer3Span = document.getElementById('score-player-3');
     const statsWinsSpan = document.getElementById('stats-wins');
     const statsLossesSpan = document.getElementById('stats-losses');
-    const player1HandTricksSpan = document.getElementById('player-1-hand-tricks');
-    const player2HandTricksSpan = document.getElementById('player-2-hand-tricks');
-    const player3HandTricksSpan = document.getElementById('player-3-hand-tricks');
+    const player0YouHandTricksSpan = document.getElementById('player-0-you-hand-tricks');
+    const player1AiHandTricksSpan = document.getElementById('player-1-ai-hand-tricks');
+    const player2AiHandTricksSpan = document.getElementById('player-2-ai-hand-tricks');
     const dummyHandDisplaySpan = document.getElementById('dummy-hand-display'); // Changed from kitty
     const trickAreaDiv = document.getElementById('trick-area'); // Added for current trick
 
@@ -150,7 +150,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 if (neededToDiscard === 1) { // Special handling for single card selection: auto-swap
                     if (selectedCardsForDiscard.length === 1) {
                         // Deselect the currently selected card
-                        const currentlySelectedCardElement = document.querySelector('#player-1-hand .card.selected');
+                        const currentlySelectedCardElement = document.querySelector('#player-0-you-hand .card.selected');
                         if (currentlySelectedCardElement) {
                             currentlySelectedCardElement.classList.remove('selected');
                         }
@@ -171,7 +171,7 @@ document.addEventListener('DOMContentLoaded', () => {
             updateSelectedCardsDisplay();
         } else if (phase === 'playing_tricks' && isMyTurn) {
             // Single card selection for playing a trick
-            document.querySelectorAll('#player-1-hand .card.selected').forEach(el => el.classList.remove('selected'));
+            document.querySelectorAll('#player-0-you-hand .card.selected').forEach(el => el.classList.remove('selected'));
             cardElement.classList.add('selected');
             selectedCardsForDiscard = [{ rank: cardData.rank, suit: cardData.suit, name: cardData.name }];
             playCardButton.textContent = 'Play Selected Card';
@@ -187,15 +187,19 @@ document.addEventListener('DOMContentLoaded', () => {
             playActionsDiv.style.display = 'none';
             goAloneActionsDiv.style.display = 'none';
             startGameButton.style.display = 'inline-block';
-            player1HandDiv.innerHTML = player2HandDiv.innerHTML = player3HandDiv.innerHTML = '';
+            if (player0YouHandDiv) player0YouHandDiv.innerHTML = '';
+            if (player1AiHandDiv) player1AiHandDiv.innerHTML = '';
+            if (player2AiHandDiv) player2AiHandDiv.innerHTML = '';
             upCardDisplaySpan.innerHTML = 'None';
             dummyHandDisplaySpan.textContent = '0 cards';
             trickAreaDiv.innerHTML = '<h3>Current Trick</h3>';
             trumpSuitSpan.textContent = 'None';
-            scorePlayer1Span.textContent = scorePlayer2Span.textContent = scorePlayer3Span.textContent = '0';
-            if (player1HandTricksSpan) player1HandTricksSpan.textContent = '0';
-            if (player2HandTricksSpan) player2HandTricksSpan.textContent = '0';
-            if (player3HandTricksSpan) player3HandTricksSpan.textContent = '0';
+            if (scorePlayer0Span) scorePlayer0Span.textContent = '0';
+            if (scorePlayer1Span) scorePlayer1Span.textContent = '0';
+            if (scorePlayer2Span) scorePlayer2Span.textContent = '0';
+            if (player0YouHandTricksSpan) player0YouHandTricksSpan.textContent = '0';
+            if (player1AiHandTricksSpan) player1AiHandTricksSpan.textContent = '0';
+            if (player2AiHandTricksSpan) player2AiHandTricksSpan.textContent = '0';
             return;
         }
         clientGameState = gameState;
@@ -223,16 +227,22 @@ document.addEventListener('DOMContentLoaded', () => {
             }, 750);
         }
 
-        ['0', '1', '2'].forEach(playerKey => {
-            const handDivId = `player-${parseInt(playerKey) + 1}-hand`;
-            const handDiv = document.getElementById(handDivId);
+        // Render player hands
+        const playerHandDivs = {
+            '0': player0YouHandDiv,
+            '1': player1AiHandDiv,
+            '2': player2AiHandDiv
+        };
+
+        Object.keys(playerHandDivs).forEach(playerKey => {
+            const handDiv = playerHandDivs[playerKey];
             if (!handDiv) return;
             handDiv.innerHTML = '';
             if (gameState.hands && gameState.hands[playerKey]) {
                 gameState.hands[playerKey].forEach(card => {
-                    const isOpponent = playerKey !== '0';
+                    const isOpponent = playerKey !== '0'; // Player '0' is 'You'
                     const cardElement = displayCard(card, isOpponent);
-                    if (!isOpponent) {
+                    if (!isOpponent) { // Only add click listeners for 'You'
                          cardElement.addEventListener('click', () => handleCardClick(cardElement, card));
                          cardElement.addEventListener('dblclick', () => {
                             if (clientGameState.game_phase === 'playing_tricks' && clientGameState.current_player_turn === 0) {
@@ -287,18 +297,18 @@ document.addEventListener('DOMContentLoaded', () => {
         }
 
         trumpSuitSpan.textContent = gameState.trump_suit ? SUIT_NAMES[gameState.trump_suit] : 'None';
-        scorePlayer1Span.textContent = gameState.scores['0'];
-        scorePlayer2Span.textContent = gameState.scores['1'];
-        scorePlayer3Span.textContent = gameState.scores['2'];
+        if (scorePlayer0Span) scorePlayer0Span.textContent = gameState.scores['0'];
+        if (scorePlayer1Span) scorePlayer1Span.textContent = gameState.scores['1'];
+        if (scorePlayer2Span) scorePlayer2Span.textContent = gameState.scores['2'];
 
         if (gameState.round_tricks_won) {
-            if (player1HandTricksSpan) player1HandTricksSpan.textContent = gameState.round_tricks_won['0'] || '0';
-            if (player2HandTricksSpan) player2HandTricksSpan.textContent = gameState.round_tricks_won['1'] || '0';
-            if (player3HandTricksSpan) player3HandTricksSpan.textContent = gameState.round_tricks_won['2'] || '0';
+            if (player0YouHandTricksSpan) player0YouHandTricksSpan.textContent = gameState.round_tricks_won['0'] || '0';
+            if (player1AiHandTricksSpan) player1AiHandTricksSpan.textContent = gameState.round_tricks_won['1'] || '0';
+            if (player2AiHandTricksSpan) player2AiHandTricksSpan.textContent = gameState.round_tricks_won['2'] || '0';
         } else {
-            if (player1HandTricksSpan) player1HandTricksSpan.textContent = '0';
-            if (player2HandTricksSpan) player2HandTricksSpan.textContent = '0';
-            if (player3HandTricksSpan) player3HandTricksSpan.textContent = '0';
+            if (player0YouHandTricksSpan) player0YouHandTricksSpan.textContent = '0';
+            if (player1AiHandTricksSpan) player1AiHandTricksSpan.textContent = '0';
+            if (player2AiHandTricksSpan) player2AiHandTricksSpan.textContent = '0';
         }
 
         gameMessageP.textContent = gameState.message || "";
@@ -310,7 +320,13 @@ document.addEventListener('DOMContentLoaded', () => {
         });
 
         if (gameState.maker !== null && gameState.maker !== undefined) {
-            const makerPlayerDiv = document.getElementById(`player-${parseInt(gameState.maker) + 1}`);
+            // Adjust ID based on gameState.maker (0, 1, or 2)
+            let makerPlayerId;
+            if (gameState.maker === 0) makerPlayerId = 'player-0-you';
+            else if (gameState.maker === 1) makerPlayerId = 'player-1-ai';
+            else if (gameState.maker === 2) makerPlayerId = 'player-2-ai';
+
+            const makerPlayerDiv = document.getElementById(makerPlayerId);
             if (makerPlayerDiv) {
                 makerPlayerDiv.classList.add('player-area-maker');
                 const makerTitle = makerPlayerDiv.querySelector('h2');

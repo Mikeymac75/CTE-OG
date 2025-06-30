@@ -11,9 +11,9 @@
         <div class="sidebar">
             <div class="scoreboard">
                 <h3>Score</h3>
-                <p>Player 1 (You): <span id="score-player-1">0</span></p>
+                <p>You: <span id="score-player-0">0</span></p>
+                <p>Player 1: <span id="score-player-1">0</span></p>
                 <p>Player 2: <span id="score-player-2">0</span></p>
-                <p>Player 3: <span id="score-player-3">0</span></p>
             </div>
             <div class="overall-stats">
                 <h3>Overall Stats</h3>
@@ -32,9 +32,9 @@
             </header>
 
             <div class="player-areas">
-                <div id="player-2" class="player-area opponent-area">
-                    <h2>Player 2 (Opponent)</h2>
-                    <div class="hand" id="player-2-hand">
+                <div id="player-1-ai" class="player-area opponent-area">
+                    <h2>Player 1 (AI)</h2>
+                    <div class="hand" id="player-1-ai-hand">
                         <!-- Cards will be added here by JS -->
                     </div>
                 </div>
@@ -46,23 +46,23 @@
                     </div>
                     <div class="current-hand-tricks-area" id="current-hand-tricks-area">
                         <h3>Tricks This Hand</h3>
-                        <p>Player 1 (You): <span id="player-1-hand-tricks">0</span></p>
-                        <p>Player 2: <span id="player-2-hand-tricks">0</span></p>
-                        <p>Player 3: <span id="player-3-hand-tricks">0</span></p>
+                        <p>You: <span id="player-0-you-hand-tricks">0</span></p>
+                        <p>Player 1: <span id="player-1-ai-hand-tricks">0</span></p>
+                        <p>Player 2: <span id="player-2-ai-hand-tricks">0</span></p>
                     </div>
                 </div>
 
-                <div id="player-3" class="player-area opponent-area">
-                    <h2>Player 3 (Opponent)</h2>
-                    <div class="hand" id="player-3-hand">
+                <div id="player-2-ai" class="player-area opponent-area">
+                    <h2>Player 2 (AI)</h2>
+                    <div class="hand" id="player-2-ai-hand">
                         <!-- Cards will be added here by JS -->
                     </div>
                 </div>
             </div>
 
-            <div id="player-1" class="player-area human-player-area">
-                <h2>Player 1 (You)</h2>
-                <div class="hand" id="player-1-hand">
+            <div id="player-0-you" class="player-area human-player-area">
+                <h2>You</h2>
+                <div class="hand" id="player-0-you-hand">
                     <!-- Your cards will be added here by JS -->
                 </div>
             </div>
