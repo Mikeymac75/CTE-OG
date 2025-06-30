@@ -560,28 +560,48 @@ document.addEventListener('DOMContentLoaded', () => {
      * Renders the board with the new game state.
      * Handles potential connection errors.
      */
-    async function fetchInitialGameState() {
+    async function handleStartGameButtonClick() {
         try {
-            const response = await fetch('/api/start_game'); // GET request to start/reset game
-            if (!response.ok) {
-                // Try to parse a JSON error response from the server
-                let errorMsg = `HTTP error! status: ${response.status}`;
-                try {
-                    const errData = await response.json();
-                    errorMsg = errData.error || errData.message || errorMsg; // Use server's error message if available
-                } catch (e) {
-                    // If parsing JSON fails, try to get text content
-                    const errorText = await response.text().catch(() => "Could not retrieve error details from server response.");
-                    errorMsg = errorText || errorMsg; // Use text if available, otherwise the status code message
+            let currentPhase = clientGameState ? clientGameState.game_phase : null;
+            let data;
+
+            // If game is over, or round is over, or not yet started (null phase),
+            // first ensure server is in 'setup' state.
+            if (currentPhase === "game_over" || currentPhase === "round_over" || currentPhase === null || currentPhase === "setup") {
+                // Call /api/start_game to ensure server is reset to 'setup' if needed
+                // This also handles the first click when the game is in 'setup'
+                const resetResponse = await fetch('/api/start_game');
+                if (!resetResponse.ok) {
+                    const errData = await resetResponse.json().catch(() => ({ error: `HTTP error ${resetResponse.status}` }));
+                    throw new Error(errData.error || `Failed to reset game to setup: ${resetResponse.status}`);
                 }
-                throw new Error(errorMsg);
+                data = await resetResponse.json();
+                renderBoard(data); // Render the "setup" state
+
+                // If after this call, the phase is "setup", it means we are ready to deal the new round.
+                // If it was already "setup", this click means "now deal".
+                if (data.game_phase === "setup") {
+                    const dealResponse = await fetch('/api/deal_new_round');
+                    if (!dealResponse.ok) {
+                        const errDataDeal = await dealResponse.json().catch(() => ({ error: `HTTP error ${dealResponse.status}` }));
+                        throw new Error(errDataDeal.error || `Failed to deal new round: ${dealResponse.status}`);
+                    }
+                    data = await dealResponse.json();
+                    renderBoard(data); // Render the state after dealing (e.g., bidding_round_1)
+                }
+                // If /api/start_game somehow didn't return "setup" (e.g. server error, unexpected state),
+                // the renderBoard(data) above would have shown that. The next click might try again.
             }
-            const data = await response.json();
-            renderBoard(data); // Update UI with new game state
+            // Note: If the game was in an active state not covered above (e.g. bidding),
+            // and the start button was somehow visible, this logic implies the first click
+            // effectively resets to setup, and a subsequent click (if button remains/reappears)
+            // would deal. This is generally fine as the button should only be visible in terminal/setup states.
+
         } catch (error) {
-            console.error("Error fetching initial game state:", error);
-            gameMessageP.textContent = `Error starting new game: ${error.message}. Please try again or refresh the page.`;
-            renderBoard({}); // Render an empty/default board on error
+            console.error("Error during start game/deal new round sequence:", error);
+            gameMessageP.textContent = `Error: ${error.message}. Please try again or refresh.`;
+            // Attempt to render a safe, empty board state on critical error
+            renderBoard({});
         }
     }
 
@@ -651,7 +671,7 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     // --- Event Listeners for Player Actions ---
-    startGameButton.addEventListener('click', fetchInitialGameState);
+    startGameButton.addEventListener('click', handleStartGameButtonClick);
     orderUpButton.addEventListener('click', () => submitPlayerAction('order_up'));
     passBidButton.addEventListener('click', () => submitPlayerAction('pass_bid'));
 
