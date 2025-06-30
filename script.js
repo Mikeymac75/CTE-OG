@@ -3,7 +3,7 @@ document.addEventListener('DOMContentLoaded', () => {
     const player0YouHandDiv = document.getElementById('player-0-you-hand');
     const player1AiHandDiv = document.getElementById('player-1-ai-hand');
     const player2AiHandDiv = document.getElementById('player-2-ai-hand');
-    const kittyDisplayDiv = document.getElementById('kitty-display'); // This ID does not exist in HTML, but keeping var for now
+    const dummyHandDisplaySpan = document.getElementById('dummy-hand-display'); // Changed from kittyDisplayDiv
     const upCardDisplaySpan = document.getElementById('up-card-display');
     const trumpSuitSpan = document.getElementById('trump-suit');
     const gameMessageP = document.getElementById('game-message');
@@ -495,10 +495,12 @@ document.addEventListener('DOMContentLoaded', () => {
         const payload = { player_index: 0, action: action, ...details };
         let cardToAnimateElement = null;
         if (action === 'play_card' && details.card) {
-            const player1Hand = document.getElementById('player-1-hand');
-            cardToAnimateElement = Array.from(player1Hand.children).find(cardEl =>
-                cardEl.dataset.rank === details.card.rank && cardEl.dataset.suit === details.card.suit
-            );
+            // Corrected to use player0YouHandDiv which is already defined and points to 'player-0-you-hand'
+            if (player0YouHandDiv) {
+                cardToAnimateElement = Array.from(player0YouHandDiv.children).find(cardEl =>
+                    cardEl.dataset.rank === details.card.rank && cardEl.dataset.suit === details.card.suit
+                );
+            }
         }
         try {
             if (cardToAnimateElement) {

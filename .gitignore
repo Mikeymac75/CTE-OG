@@ -1,3 +1,6 @@
+# Python cache
+__pycache__/
+
 # Ignore the SQLite database file
 q_table.sqlite
 
