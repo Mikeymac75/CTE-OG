@@ -933,210 +933,144 @@ def process_ai_play_card(ai_player_idx: int):
     Args:
         ai_player_idx: The index of the AI player whose turn it is.
     """
-    global game_data #; time.sleep(0.5) # Removed AI delay
-    if game_data["game_phase"] != "playing_tricks" or game_data["current_player_turn"] != ai_player_idx: return
+    game = get_game_instance()
+    current_game_data = game.game_data
+    if current_game_data["game_phase"] != "playing_tricks" or current_game_data["current_player_turn"] != ai_player_idx: return
 
     current_agent = get_rl_agent(ai_player_idx)
     if not current_agent:
         logging.error(f"RL Agent for P{ai_player_idx} not found in process_ai_play_card. Falling back to heuristic logic.")
         # --- Start of Fallback Heuristic for missing RL Agent ---
-        # This heuristic attempts to make a reasonable play based on common Euchre strategies.
-        ai_hand_fallback = game_data["hands"][ai_player_idx]
-        lead_suit_fallback = game_data["current_trick_lead_suit"]
-        trump_suit_fallback = game_data["trump_suit"]
+        ai_hand_fallback = current_game_data["hands"][ai_player_idx]
+        lead_suit_fallback = current_game_data["current_trick_lead_suit"]
+        trump_suit_fallback = current_game_data["trump_suit"]
 
         valid_cards_fallback = get_valid_plays(list(ai_hand_fallback), lead_suit_fallback, trump_suit_fallback)
 
         if not valid_cards_fallback:
-            game_data["message"] += f" Error: AI {game_data['player_identities'][ai_player_idx]} (Fallback) has no valid cards to play."
-            if len(game_data["trick_cards"]) < game_data["num_players"]:
-                game_data["current_player_turn"] = (ai_player_idx + 1) % game_data["num_players"]
+            current_game_data["message"] += f" Error: AI {current_game_data['player_identities'][ai_player_idx]} (Fallback) has no valid cards to play."
+            if len(current_game_data["trick_cards"]) < current_game_data["num_players"]:
+                current_game_data["current_player_turn"] = (ai_player_idx + 1) % current_game_data["num_players"]
             return
 
         card_to_play = None
-        # Determine if AI can follow suit
         can_follow_lead_suit = False
         if lead_suit_fallback:
             can_follow_lead_suit = any(get_effective_suit(card, trump_suit_fallback) == lead_suit_fallback for card in ai_hand_fallback)
 
         if can_follow_lead_suit:
-            # Must follow suit. Play the highest card of that suit.
-            # valid_cards_fallback will already be filtered to only cards of the lead suit.
             valid_cards_fallback.sort(key=lambda c: get_card_value(c, trump_suit_fallback, lead_suit_fallback), reverse=True)
             card_to_play = valid_cards_fallback[0]
             logging.info(f"AI P{ai_player_idx} (Fallback Heuristic, Following Suit) playing highest: {str(card_to_play)}")
         else:
-            # Cannot follow suit. Decide whether to trump or slough.
             trump_options = [card for card in valid_cards_fallback if get_effective_suit(card, trump_suit_fallback) == trump_suit_fallback]
             non_trump_options = [card for card in valid_cards_fallback if get_effective_suit(card, trump_suit_fallback) != trump_suit_fallback]
-
-            # Check if already winning trick or if trick is already trumped higher
-            current_trick_winning_info = determine_trick_winner_so_far(game_data["trick_cards"], trump_suit_fallback, lead_suit_fallback)
-
+            current_trick_winning_info = determine_trick_winner_so_far(current_game_data["trick_cards"], trump_suit_fallback, lead_suit_fallback)
             can_win_with_trump = False
             best_trump_to_play = None
 
             if trump_options:
                 winning_trumps = []
                 for trump_card in trump_options:
-                    # Simulate playing this trump card
-                    hypothetical_trick_cards = game_data["trick_cards"] + [{'player': ai_player_idx, 'card': trump_card}]
-                    # The lead suit for evaluation should be the original lead suit of the trick,
-                    # or if no one has played yet (lead_suit_fallback is None), it would be trump.
+                    hypothetical_trick_cards = current_game_data["trick_cards"] + [{'player': ai_player_idx, 'card': trump_card}]
                     eval_lead_suit = lead_suit_fallback if lead_suit_fallback else trump_suit_fallback
                     if determine_trick_winner(hypothetical_trick_cards, trump_suit_fallback, eval_lead_suit) == ai_player_idx:
                         winning_trumps.append(trump_card)
-
                 if winning_trumps:
                     can_win_with_trump = True
-                    # Play the highest value trump if trying to win (original behavior)
                     winning_trumps.sort(key=lambda c: get_card_value(c, trump_suit_fallback, lead_suit_fallback), reverse=True)
                     best_trump_to_play = winning_trumps[0]
-                    # Alternative: play lowest necessary trump to win:
-                    # winning_trumps.sort(key=lambda c: get_card_value(c, trump_suit_fallback, lead_suit_fallback))
-                    # best_trump_to_play = winning_trumps[0]
-
 
             if can_win_with_trump and best_trump_to_play:
-                 # Consider if it's worth trumping (e.g. partner is winning, points needed, etc.)
-                 # For simple heuristic: if can win with trump, do it with the best trump.
                 card_to_play = best_trump_to_play
                 logging.info(f"AI P{ai_player_idx} (Fallback Heuristic, Trumping) playing {str(card_to_play)}")
             elif non_trump_options:
-                # Cannot win with trump (or no trump) or chooses not to, and has non-trump cards to slough.
-                # Slough the lowest value non-trump card.
                 non_trump_options.sort(key=lambda c: get_card_value(c, trump_suit_fallback, lead_suit_fallback)) # Sort ascending
                 card_to_play = non_trump_options[0]
                 logging.info(f"AI P{ai_player_idx} (Fallback Heuristic, Sloughing Non-Trump) playing lowest: {str(card_to_play)}")
-            elif trump_options: # Has only trump cards left, but none can win (or chose not to win with trump)
-                # Slough the lowest value trump card.
+            elif trump_options:
                 trump_options.sort(key=lambda c: get_card_value(c, trump_suit_fallback, lead_suit_fallback)) # Sort ascending
                 card_to_play = trump_options[0]
                 logging.info(f"AI P{ai_player_idx} (Fallback Heuristic, Sloughing Trump) playing lowest: {str(card_to_play)}")
             else:
-                # Should not happen if valid_cards_fallback was not empty. This means no valid cards.
-                # The initial check for empty valid_cards_fallback should catch this.
-                # If it somehow reaches here, play the first valid card as a last resort.
                 card_to_play = valid_cards_fallback[0]
                 logging.error(f"AI P{ai_player_idx} (Fallback Heuristic) in unexpected state. Playing first valid: {str(card_to_play)}")
 
-        if not card_to_play: # Should be set by logic above if valid_cards_fallback is not empty
+        if not card_to_play:
             logging.error(f"AI P{ai_player_idx} (Fallback) - card_to_play is None unexpectedly. Defaulting to first valid card.")
             card_to_play = valid_cards_fallback[0]
-
-        # logging.info(f"AI P{ai_player_idx} (Fallback Heuristic) playing {str(card_to_play)}") # Covered by more specific logs above
         # --- End of Fallback Heuristic ---
     else:
         # --- RL Agent Logic ---
-        state_dict = get_rl_state(ai_player_idx, game_data)
-        # Store state and action for future learning update
-        game_data["rl_training_data"][ai_player_idx] = {"state": state_dict, "action": None, "action_type": "play_card"}
-
-        ai_hand = game_data["hands"][ai_player_idx] # Get current hand
-        lead_suit = game_data["current_trick_lead_suit"]
-        trump_suit = game_data["trump_suit"]
-
-        # Get valid actions (cards to play)
+        state_dict = get_rl_state(ai_player_idx, current_game_data)
+        current_game_data["rl_training_data"][ai_player_idx] = {"state": state_dict, "action": None, "action_type": "play_card"}
+        ai_hand = current_game_data["hands"][ai_player_idx]
+        lead_suit = current_game_data["current_trick_lead_suit"]
+        trump_suit = current_game_data["trump_suit"]
         valid_card_objects = get_valid_plays(list(ai_hand), lead_suit, trump_suit)
+
         if not valid_card_objects:
-            game_data["message"] += f" Error: AI {ai_player_idx+1} (RL) has no valid cards to play."
-            if len(game_data["trick_cards"]) < game_data["num_players"]: game_data["current_player_turn"] = (ai_player_idx + 1) % game_data["num_players"]
+            current_game_data["message"] += f" Error: AI {ai_player_idx+1} (RL) has no valid cards to play."
+            if len(current_game_data["trick_cards"]) < current_game_data["num_players"]:
+                current_game_data["current_player_turn"] = (ai_player_idx + 1) % current_game_data["num_players"]
             return
 
-        # Convert Card objects to dictionary representations for the agent
         valid_actions_for_agent = [card.to_dict() for card in valid_card_objects]
-
         chosen_action_dict = current_agent.choose_action(state_dict, valid_actions_for_agent)
-        game_data["rl_training_data"][ai_player_idx]["action"] = chosen_action_dict # Store chosen action (dict form)
+        current_game_data["rl_training_data"][ai_player_idx]["action"] = chosen_action_dict
 
-
-        if chosen_action_dict is None: # Should not happen if valid_actions_for_agent is not empty
+        if chosen_action_dict is None:
             logging.error(f"RL Agent P{ai_player_idx} failed to choose an action. Playing first valid card.")
             card_to_play = valid_card_objects[0]
         else:
-            # Find the actual Card object in hand that matches the chosen action dict
             card_to_play = next((c for c in ai_hand if c.suit == chosen_action_dict['suit'] and c.rank == chosen_action_dict['rank']), None)
             if not card_to_play:
                 logging.error(f"RL Agent P{ai_player_idx} chose card {chosen_action_dict} not found in hand {[str(c) for c in ai_hand]}. Playing first valid.")
-                card_to_play = valid_card_objects[0] # Fallback
+                card_to_play = valid_card_objects[0]
 
-        # Note: The chosen_action_dict (serialized form) is stored for learning.
-        # card_to_play is the actual Card object for execution.
-
-        # --- Heuristic Overlay for RL Agent Sloughing ---
-        # Purpose: To guide the RL agent towards more "standard" sloughing behavior
-        # (discarding the lowest-value, non-winning, off-suit card) if it chooses to slough.
-        # This helps prevent the agent from learning to discard valuable cards unnecessarily
-        # when it's not following suit and not trying to win the trick.
-        # It does not override decisions to follow suit or to win with trump.
         can_follow_lead_suit_rl = False
-        if lead_suit: # lead_suit is current_trick_lead_suit
+        if lead_suit:
             can_follow_lead_suit_rl = any(get_effective_suit(c, trump_suit) == lead_suit for c in ai_hand)
 
-        if not can_follow_lead_suit_rl and card_to_play: # Cannot follow suit and has chosen a card
+        if not can_follow_lead_suit_rl and card_to_play:
             chosen_card_effective_suit = get_effective_suit(card_to_play, trump_suit)
-
-            # Condition: Chosen card is not trump AND there are other non-trump cards it could have played
             if chosen_card_effective_suit != trump_suit:
-                # Is the trick already won by someone else with a higher card or trump that card_to_play cannot beat?
-                # Or, more simply, is the AI trying to slough? This is implied by not following suit and not playing trump (or playing a trump that won't win).
-
-                # Let's check if the chosen card can win. If it can, the agent might be trying to win.
-                # If it cannot win, and it's an off-suit play, then it's a slough.
-                hypothetical_trick_after_play = game_data["trick_cards"] + [{'player': ai_player_idx, 'card': card_to_play}]
+                hypothetical_trick_after_play = current_game_data["trick_cards"] + [{'player': ai_player_idx, 'card': card_to_play}]
                 eval_lead_suit_for_rl = lead_suit if lead_suit else chosen_card_effective_suit
                 is_chosen_card_winning = determine_trick_winner(hypothetical_trick_after_play, trump_suit, eval_lead_suit_for_rl) == ai_player_idx
-
-                if not is_chosen_card_winning: # If the chosen card does not win the trick (it's a slough or a failed trump attempt)
-                    # And the chosen card is not trump (already checked by chosen_card_effective_suit != trump_suit)
-                    # Now, find the actual lowest value non-trump card it *could* have played.
-
-                    # valid_card_objects contains all legally playable cards in this situation.
-                    # Filter these to non-trump cards.
+                if not is_chosen_card_winning:
                     sloughable_cards = [c for c in valid_card_objects if get_effective_suit(c, trump_suit) != trump_suit]
-
                     if sloughable_cards:
-                        sloughable_cards.sort(key=lambda c: get_card_value(c, trump_suit, lead_suit)) # Sort ascending by value
+                        sloughable_cards.sort(key=lambda c: get_card_value(c, trump_suit, lead_suit))
                         lowest_value_slough_card = sloughable_cards[0]
-
-                        # If the agent chose a higher value slough card than the absolute lowest available slough card
                         if get_card_value(card_to_play, trump_suit, lead_suit) > get_card_value(lowest_value_slough_card, trump_suit, lead_suit):
                             original_choice_log = str(card_to_play)
-                            card_to_play = lowest_value_slough_card # Override
-                                                        # Also update the action in rl_training_data for accurate learning if we were to use this post-decision state.
-                            # However, the agent already made its Q-value update based on chosen_action_dict.
-                            # This override is purely for play execution. For learning, this means the agent might
-                            # not directly learn this heuristic unless rewards reflect it.
-                            # For now, we accept this discrepancy: agent learns from its choice, but execution is overridden.
-                            # game_data["rl_training_data"][ai_player_idx]["action"] = card_to_play.to_dict() # Update action to reflect override
+                            card_to_play = lowest_value_slough_card
                             logging.info(f"AI P{ai_player_idx} (RL Agent Heuristic Override): Original choice {original_choice_log} was high slough. Overridden to play lowest slough: {str(card_to_play)}")
-
         logging.info(f"AI P{ai_player_idx} (RL Agent) chose to play: {str(card_to_play)} (Raw action from agent: {chosen_action_dict})")
         # --- End of RL Agent Logic (with Heuristic Overlay) ---
 
-    # Common logic to execute the play
-    ai_hand = game_data["hands"][ai_player_idx] # Re-fetch, as it might be a copy above
+    ai_hand = current_game_data["hands"][ai_player_idx]
     actual_card_to_remove_from_hand = next((c for c in ai_hand if c.suit == card_to_play.suit and c.rank == card_to_play.rank), None)
+
     if not actual_card_to_remove_from_hand:
-        # This can happen if card_to_play is from valid_cards (a copy) and not the original hand object.
-        # Find the equivalent card in hand.
         logging.warning(f"AI P{ai_player_idx} couldn't find exact object {str(card_to_play)}. Searching by val in hand: {[str(c) for c in ai_hand]}.")
-        # Re-select from valid_cards to ensure it's an object that *could* be in hand if logic was perfect.
-        # Then find that card in the actual hand.
-        target_card_val = card_to_play # Keep the properties of the chosen card.
+        target_card_val = card_to_play
         card_to_play = next((h_card for h_card in ai_hand if h_card.suit == target_card_val.suit and h_card.rank == target_card_val.rank), None)
-        if card_to_play: # Found it by value in hand.
+        if card_to_play:
             actual_card_to_remove_from_hand = card_to_play
             logging.info(f"Found card {str(actual_card_to_remove_from_hand)} by value in hand.")
-        else: # Still not found, this is a bigger issue.
+        else:
             logging.error(f"AI P{ai_player_idx} CRITICALLY tried to play {str(target_card_val)} but not found in hand by value: {[str(c) for c in ai_hand]}. Playing first valid from list as last resort.")
-            if valid_cards: # valid_cards was defined in the RL Agent Logic block or fallback
+            # valid_cards was defined in the RL Agent Logic block or fallback, needs to be accessible or re-fetched
+            valid_cards = get_valid_plays(list(ai_hand), current_game_data["current_trick_lead_suit"], current_game_data["trump_suit"]) # Re-fetch if not in scope
+            if valid_cards:
                 card_to_play = valid_cards[0]
                 actual_card_to_remove_from_hand = next((c for c in ai_hand if c.suit == card_to_play.suit and c.rank == card_to_play.rank), None)
-                if not actual_card_to_remove_from_hand: # If even the first valid card isn't in hand, something is deeply wrong
+                if not actual_card_to_remove_from_hand:
                     logging.error(f"CRITICAL: First valid card {str(card_to_play)} also not in hand. Aborting AI play for P{ai_player_idx}.")
                     return
-            else: # No valid cards, already handled, but as a safeguard:
+            else:
                 logging.error(f"CRITICAL: No valid cards and logic failed to find card in hand for P{ai_player_idx}.")
                 return
 
@@ -1144,53 +1078,43 @@ def process_ai_play_card(ai_player_idx: int):
         try:
             ai_hand.remove(actual_card_to_remove_from_hand)
             logging.info(f"AI P{ai_player_idx} successfully removed {str(actual_card_to_remove_from_hand)} from hand.")
-            # Record the played card for round tracking
-            game_data.get("played_cards_this_round", []).append(actual_card_to_remove_from_hand) # Use the actual card object removed
+            current_game_data.get("played_cards_this_round", []).append(actual_card_to_remove_from_hand)
         except ValueError:
             logging.error(f"CRITICAL: Failed to remove {str(actual_card_to_remove_from_hand)} from AI P{ai_player_idx}'s hand. Hand: {[str(c) for c in ai_hand]}")
-            return # Avoid proceeding with inconsistent state
-    else: # Should be caught by earlier checks, but as a final safeguard
+            return
+    else:
         logging.error(f"CRITICAL: AI P{ai_player_idx} somehow has no actual_card_to_remove_from_hand. Chosen: {str(card_to_play)}. Hand: {[str(c) for c in ai_hand]}"); return
 
-    game_data["trick_cards"].append({'player': ai_player_idx, 'card': card_to_play}) # Use the card object that was chosen and confirmed in hand
-    # Message now directly uses player_identities which includes "(AI)" or "(You)"
-    game_data["message"] = f"{game_data['player_identities'][ai_player_idx]} played {str(card_to_play)}."
+    current_game_data["trick_cards"].append({'player': ai_player_idx, 'card': card_to_play})
+    current_game_data["message"] = f"{current_game_data['player_identities'][ai_player_idx]} played {str(card_to_play)}."
 
-    # Set current_trick_lead_suit if it's not set (i.e., this is the first card of the trick)
-    if not game_data["current_trick_lead_suit"]:
-        game_data["current_trick_lead_suit"] = get_effective_suit(card_to_play, game_data["trump_suit"])
-        logging.info(f"AI P{ai_player_idx} (as first player in trick) set lead suit to {game_data['current_trick_lead_suit']} with card {str(card_to_play)}")
+    if not current_game_data["current_trick_lead_suit"]:
+        current_game_data["current_trick_lead_suit"] = get_effective_suit(card_to_play, current_game_data["trump_suit"])
+        logging.info(f"AI P{ai_player_idx} (as first player in trick) set lead suit to {current_game_data['current_trick_lead_suit']} with card {str(card_to_play)}")
 
-    num_players_in_trick = len(game_data["trick_cards"]); expected_cards_in_trick = game_data["num_players"]
+    num_players_in_trick = len(current_game_data["trick_cards"]); expected_cards_in_trick = current_game_data["num_players"]
     if num_players_in_trick == expected_cards_in_trick:
-        # Pass the now definitive lead suit for the trick
-        winner_idx = determine_trick_winner(game_data["trick_cards"], game_data["trump_suit"], game_data["current_trick_lead_suit"])
-        game_data["round_tricks_won"][winner_idx] += 1
-        game_data["last_completed_trick"] = {"played_cards": [tc.copy() for tc in game_data["trick_cards"]], "winner_player_idx": winner_idx, "winner_name": game_data['player_identities'][winner_idx]}
+        winner_idx = determine_trick_winner(current_game_data["trick_cards"], current_game_data["trump_suit"], current_game_data["current_trick_lead_suit"])
+        current_game_data["round_tricks_won"][winner_idx] += 1
+        current_game_data["last_completed_trick"] = {"played_cards": [tc.copy() for tc in current_game_data["trick_cards"]], "winner_player_idx": winner_idx, "winner_name": current_game_data['player_identities'][winner_idx]}
 
-        # --- RL Update for all AI players who had pending actions for this trick ---
-        # The event_data provides context about the trick's outcome.
-        trick_event_data = {"trick_winner_idx": winner_idx, "played_cards_in_trick": game_data["last_completed_trick"]["played_cards"]}
-        for p_id in game_data["player_identities"].keys():
-            if p_id != 0 and game_data["rl_training_data"].get(p_id) and game_data["rl_training_data"][p_id].get("action_type") == "play_card":
-                # This implies P_id made a play_card decision that we have stored state/action for.
+        trick_event_data = {"trick_winner_idx": winner_idx, "played_cards_in_trick": current_game_data["last_completed_trick"]["played_cards"]}
+        for p_id in current_game_data["player_identities"].keys():
+            if p_id != 0 and current_game_data["rl_training_data"].get(p_id) and current_game_data["rl_training_data"][p_id].get("action_type") == "play_card":
                 process_rl_update(p_id, "trick_end", event_data=trick_event_data)
-        # --- End RL Update ---
 
-        logging.info(f"Trick completed. Winner: P{winner_idx}. Storing last_completed_trick: {game_data['last_completed_trick']}")
-        game_data["message"] += f" {game_data['player_identities'][winner_idx]} wins the trick."
-        game_data["trick_cards"] = []; game_data["current_trick_lead_suit"] = None; game_data["current_player_turn"] = winner_idx; game_data["trick_leader"] = winner_idx
+        logging.info(f"Trick completed. Winner: P{winner_idx}. Storing last_completed_trick: {current_game_data['last_completed_trick']}")
+        current_game_data["message"] += f" {current_game_data['player_identities'][winner_idx]} wins the trick."
+        current_game_data["trick_cards"] = []; current_game_data["current_trick_lead_suit"] = None; current_game_data["current_player_turn"] = winner_idx; current_game_data["trick_leader"] = winner_idx
 
         if is_round_over():
-            score_round() # score_round will handle round_end and game_end RL updates
+            score_round()
             return
         else:
-            game_data["message"] += f" {game_data['player_identities'][winner_idx]} leads next trick."
-            # If the next player is AI, their turn will be processed by the game loop or API call.
-            # No immediate call to process_ai_play_card here, as the update for the just-finished action needs to complete.
+            current_game_data["message"] += f" {current_game_data['player_identities'][winner_idx]} leads next trick."
     else:
-        game_data["current_player_turn"] = (ai_player_idx + 1) % game_data["num_players"]
-        game_data["message"] += f" Next turn: {game_data['player_identities'][game_data['current_player_turn']]}."
+        current_game_data["current_player_turn"] = (ai_player_idx + 1) % current_game_data["num_players"]
+        current_game_data["message"] += f" Next turn: {current_game_data['player_identities'][current_game_data['current_player_turn']]}."
 
 def get_valid_plays(hand, lead_suit, trump_suit):
     if not lead_suit: return list(hand)
