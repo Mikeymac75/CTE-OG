@@ -1288,7 +1288,7 @@ def predict_maker_can_beat_card(maker_idx: int, target_card_to_beat: Card,
 def old_determine_trick_winner(trick_cards_played, trump_suit): # Keep old for reference during refactor if needed
     if not trick_cards_played: return -1
     winning_player = -1; highest_value_card = None
-    lead_card_obj = trick_cards_played[0]['card'];ตัดสิน_suit_of_trick = get_effective_suit(lead_card_obj, trump_suit) # Original: lead_suit_of_trick
+    lead_card_obj = trick_cards_played[0]['card'];lead_suit_of_trick = get_effective_suit(lead_card_obj, trump_suit) # Original: lead_suit_of_trick
     for play in trick_cards_played:
         player = play['player']; card = play['card']
         card_effective_suit = get_effective_suit(card, trump_suit); card_value = get_card_value(card, trump_suit,ตัดสิน_suit_of_trick) # Pass lead suit
@@ -1401,7 +1401,6 @@ def start_game_api():
     (dealing cards, setting up-card, etc.).
     If the first player to bid is an AI, it triggers the AI's bidding process.
     Returns the full game state as JSON.
-    """
     API endpoint to ensure the game is in a 'setup' state.
     If the game is 'game_over' or not yet initialized (None), it resets the game
     to the 'setup' phase by calling initialize_game_data().
@@ -2421,10 +2420,10 @@ if __name__ == "__main__":
     # Ensure all statements within this block are indented.
 
     # To run the Flask app (ensure app is defined globally):
-    # app.run(debug=True, host='0.0.0.0')
+    app.run(debug=True, host='0.0.0.0')
 
     # To run the training simulation:
-    run_training_simulation(10000, save_interval=5)
+    # run_training_simulation(10, save_interval=5)
 
     # To migrate existing q_table.json to SQLite (run once, if needed):
     # migrate_json_to_sqlite()
