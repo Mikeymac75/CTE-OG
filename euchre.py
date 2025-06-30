@@ -2226,7 +2226,6 @@ def game_data_to_json(current_game_data_arg: dict) -> dict:
         json_safe_data['played_cards_this_round'] = [card.to_dict() for card in json_safe_data['played_cards_this_round']]
     return json_safe_data
 
-if __name__ == "__main__":
 # --- Training Simulation ---
 def run_training_simulation(num_games_to_simulate: int, save_interval: int = 10):
     """
@@ -2244,9 +2243,13 @@ def run_training_simulation(num_games_to_simulate: int, save_interval: int = 10)
     # This defines _current_game_instance which holds game_data and rl_agents.
     initialize_game_data()
     # The Game instance (_current_game_instance) now manages rl_agents.
-    # The global `rl_agents` dictionary is no longer the primary source of truth during simulation.
-    # Functions called within the simulation loop need to be updated to use get_game_instance().rl_agents
-    # or get_game_instance().game_data if they were relying on the old globals.
+    # The global `rl_agents` dictionary is no longer the primary source of truth for agent instances.
+    # Functions called within the simulation loop need to be updated to use
+    # get_game_instance().rl_agents and get_game_instance().game_data
+    # if they were relying on the old globals `rl_agents` or `game_data`.
+    # This specific change addresses the NameError for `rl_agents` if it was not defined globally
+    # by ensuring `initialize_game_data()` (which sets up the Game instance) is called.
+    # The original `if not rl_agents:` check is removed as initialization is now unconditional here.
 
     for game_num in range(1, num_games_to_simulate + 1):
         logging.info(f"--- Starting Training Game {game_num} ---")
@@ -2255,7 +2258,7 @@ def run_training_simulation(num_games_to_simulate: int, save_interval: int = 10)
         initialize_game_data()
         # Access game_data through the game instance
         game = get_game_instance()
-        current_game_data = game.game_data
+        current_game_data = game.game_data # Use current_game_data for modifications
         current_game_data["dealer"] = random.randint(0, current_game_data["num_players"] - 1) # Random dealer for new game
 
         game_over_flag = False
@@ -2264,16 +2267,17 @@ def run_training_simulation(num_games_to_simulate: int, save_interval: int = 10)
             round_num += 1
             logging.info(f"Game {game_num}, Round {round_num} starting...")
 
+            # Refresh current_game_data before starting a new round
+            current_game_data = get_game_instance().game_data
             # Determine dealer for the new round
             if current_game_data["game_phase"] != "setup": # If not the very first round of the game
                 current_game_data["dealer"] = (current_game_data["dealer"] + 1) % current_game_data["num_players"]
 
-            initialize_new_round() # Deals cards, sets up bidding phase, etc.
+            initialize_new_round() # This function must use get_game_instance().game_data
 
             round_over_flag = False
             while not round_over_flag:
-                # Refresh current_game_data in case it was changed by functions like initialize_new_round
-                current_game_data = get_game_instance().game_data
+                current_game_data = get_game_instance().game_data # Refresh at start of each turn/loop
                 current_player_id = current_game_data["current_player_turn"]
                 current_phase = current_game_data["game_phase"]
 
@@ -2286,7 +2290,6 @@ def run_training_simulation(num_games_to_simulate: int, save_interval: int = 10)
                 logging.debug(f"Game {game_num}, R{round_num}, Phase: {current_phase}, Turn: P{current_player_id}")
 
                 # AI logic for different game phases
-                # Since all players are AI in simulation, no human input is awaited.
                 if current_phase == "bidding_round_1":
                     process_ai_bid_action({'player_index': current_player_id, 'action': 'ai_bidding_round_1'})
                 elif current_phase == "bidding_round_2":
@@ -2294,7 +2297,7 @@ def run_training_simulation(num_games_to_simulate: int, save_interval: int = 10)
                 elif current_phase == "dealer_must_call":
                     process_ai_bid_action({'player_index': current_player_id, 'action': 'ai_dealer_stuck_call'})
                 elif current_phase == "prompt_go_alone":
-                    ai_decide_go_alone_and_proceed(current_player_id) # AI Maker decides
+                    ai_decide_go_alone_and_proceed(current_player_id)
                 elif current_phase == "playing_tricks":
                     process_ai_play_card(current_player_id)
                 elif current_phase == "maker_discard":
@@ -2305,7 +2308,6 @@ def run_training_simulation(num_games_to_simulate: int, save_interval: int = 10)
                         logging.info(f"AI Dealer P{current_player_id} in phase {current_phase}. Needs to discard.")
                         dealer_hand = current_game_data["hands"][current_player_id]
                         trump_suit = current_game_data["trump_suit"]
-
                         if not dealer_hand: logging.error(f"CRITICAL: AI Dealer P{current_player_id} has empty hand in {current_phase}.")
                         elif not trump_suit: logging.error(f"CRITICAL: Trump suit not set for AI Dealer P{current_player_id} discard in {current_phase}.")
                         else:
@@ -2319,39 +2321,31 @@ def run_training_simulation(num_games_to_simulate: int, save_interval: int = 10)
                                     logging.info(f"AI Dealer P{current_player_id} discarded {str(actual_card_to_remove)}. Hand size: {len(dealer_hand)}.")
                                 except (ValueError, StopIteration):
                                     logging.error(f"AI Dealer P{current_player_id} failed to find/remove card {str(card_to_discard_obj)} from hand for discard. Hand: {[str(c) for c in dealer_hand]}")
-                                    if dealer_hand: # Fallback
-                                        fallback_discard = dealer_hand.pop(0)
-                                        logging.warning(f"AI Dealer P{current_player_id} discarded {str(fallback_discard)} by fallback.")
-                                        current_game_data["message"] = f"{current_game_data['player_identities'][current_player_id]} (AI Dealer) discarded {str(fallback_discard)} (fallback)."
-
+                                    if dealer_hand: fallback_discard = dealer_hand.pop(0); logging.warning(f"AI Dealer P{current_player_id} discarded {str(fallback_discard)} by fallback."); current_game_data["message"] = f"{current_game_data['player_identities'][current_player_id]} (AI Dealer) discarded {str(fallback_discard)} (fallback)."
                                 current_game_data["game_phase"] = "prompt_go_alone"
                                 current_game_data["current_player_turn"] = current_game_data["maker"]
                                 current_game_data["cards_to_discard_count"] = 0
                                 logging.info(f"AI Dealer P{current_player_id} discard complete. Phase -> 'prompt_go_alone'. Turn for P{current_game_data['maker']} (Maker).")
                             else:
                                 logging.error(f"AI Dealer P{current_player_id} failed to select card to discard in {current_phase}.")
-                                if dealer_hand: # Fallback to prevent stall
-                                    fallback_discard = dealer_hand.pop(0)
-                                    logging.warning(f"AI Dealer P{current_player_id} discarded {str(fallback_discard)} by fallback (selection error).")
-                                    current_game_data["game_phase"] = "prompt_go_alone"; current_game_data["current_player_turn"] = current_game_data["maker"]; current_game_data["cards_to_discard_count"] = 0
+                                if dealer_hand: fallback_discard = dealer_hand.pop(0); logging.warning(f"AI Dealer P{current_player_id} discarded {str(fallback_discard)} by fallback (selection error)."); current_game_data["game_phase"] = "prompt_go_alone"; current_game_data["current_player_turn"] = current_game_data["maker"]; current_game_data["cards_to_discard_count"] = 0
                     else:
                         logging.warning(f"Phase is {current_phase} but current player P{current_player_id} is not dealer P{current_game_data['dealer']}. Skipping discard logic.")
                 else:
                     logging.error(f"Training Loop: AI P{current_player_id} in UNHANDLED phase {current_phase} for game {game_num}. Aborting game.")
-                    game_over_flag = True; round_over_flag = True # Force exit
+                    game_over_flag = True; round_over_flag = True
 
-                # Refresh current_game_data again after action
-                current_game_data = get_game_instance().game_data
-                current_phase_after_action = current_game_data["game_phase"] # Use the refreshed phase
-                if current_game_data.get("current_player_turn") == current_player_id and \
+                current_game_data_after_action = get_game_instance().game_data # Refresh state
+                current_phase_after_action = current_game_data_after_action["game_phase"]
+                if current_game_data_after_action.get("current_player_turn") == current_player_id and \
                    current_phase_after_action == current_phase and \
-                   not game_over_flag and not round_over_flag:
+                   not game_over_flag and not round_over_flag: # Check if state actually changed
                     logging.warning(f"Potential stall in training: P{current_player_id}, Phase: {current_phase}. Game state may not have progressed.")
 
                 if current_phase_after_action == "game_over": game_over_flag = True
                 if current_phase_after_action == "round_over": round_over_flag = True
 
-            logging.info(f"--- Training Game {game_num} ended. Scores: {current_game_data['scores']} ---")
+            logging.info(f"--- Training Game {game_num} ended. Scores: {get_game_instance().game_data['scores']} ---")
 
         logging.info(f"Training simulation finished for {num_games_to_simulate} games. Q-values are stored in {Q_TABLE_DB_FILE}.")
 
@@ -2424,12 +2418,17 @@ def migrate_json_to_sqlite(json_file_path="q_table.json", db_file_path=None):
             logging.info(f"SQLite connection closed for migration utility.")
 
 if __name__ == "__main__":
-    # app.run(debug=True, host='0.0.0.0') # Comment out Flask app for training
-    # Example of how to run it (e.g. for 10 iterations as requested for testing)
-    run_training_simulation(10000, save_interval=5) # save_interval is no longer used with SQLite
+    # This block executes when the script is run directly.
+    # Ensure all statements within this block are indented.
 
-    # To migrate existing q_table.json to SQLite (run once):
+    # To run the Flask app (ensure app is defined globally):
+    # app.run(debug=True, host='0.0.0.0')
+
+    # To run the training simulation:
+    run_training_simulation(10000, save_interval=5)
+
+    # To migrate existing q_table.json to SQLite (run once, if needed):
     # migrate_json_to_sqlite()
 
-    # To run the Flask app:
-    # app.run(debug=True, host='0.0.0.0')
+    # If all above are commented out, uncomment the 'pass' statement below
+    # pass
