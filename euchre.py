@@ -1286,7 +1286,7 @@ def predict_maker_can_beat_card(maker_idx: int, target_card_to_beat: Card,
         True if the heuristic predicts the maker *might* beat the target card,
         False otherwise.
     """
-    # This is a heuristic based on cards played and general probabilities.
+    This is a heuristic based on cards played and general probabilities.
     It does not know the maker's actual hand.
     """
     maker_hand_size = len(game_data_copy["hands"][maker_idx])
