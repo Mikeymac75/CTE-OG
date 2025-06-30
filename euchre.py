@@ -901,13 +901,15 @@ def get_ai_stuck_suit_call(hand: list[Card], turned_down_suit: str) -> str:
     return best_suit if best_suit else random.choice(possible_suits)
 
 def transition_to_play_phase():
-    game_data["game_phase"] = "playing_tricks"
-    game_data["current_player_turn"] = (game_data["dealer"] + 1) % game_data["num_players"]
-    game_data["trick_leader"] = game_data["current_player_turn"]
-    game_data["message"] += f" {game_data['player_identities'][game_data['current_player_turn']]} leads the first trick."
-    game_data.pop('passes_on_upcard', None); game_data.pop('passes_on_calling', None)
-    if game_data["game_phase"] == "playing_tricks" and game_data["current_player_turn"] != 0:
-        process_ai_play_card(game_data["current_player_turn"])
+    game = get_game_instance()
+    current_game_data = game.game_data
+    current_game_data["game_phase"] = "playing_tricks"
+    current_game_data["current_player_turn"] = (current_game_data["dealer"] + 1) % current_game_data["num_players"]
+    current_game_data["trick_leader"] = current_game_data["current_player_turn"]
+    current_game_data["message"] += f" {current_game_data['player_identities'][current_game_data['current_player_turn']]} leads the first trick."
+    current_game_data.pop('passes_on_upcard', None); current_game_data.pop('passes_on_calling', None)
+    if current_game_data["game_phase"] == "playing_tricks" and current_game_data["current_player_turn"] != 0:
+        process_ai_play_card(current_game_data["current_player_turn"])
 
 def process_ai_play_card(ai_player_idx: int):
     """
@@ -1381,7 +1383,9 @@ def old_determine_trick_winner(trick_cards_played, trump_suit): # Keep old for r
 
 def is_round_over():
     """Checks if the current round has concluded (i.e., 5 tricks have been played)."""
-    return sum(game_data["round_tricks_won"].values()) >= 5
+    game = get_game_instance()
+    current_game_data = game.game_data
+    return sum(current_game_data["round_tricks_won"].values()) >= 5
 
 def score_round():
     """
@@ -1391,52 +1395,53 @@ def score_round():
     Also updates the game phase to "round_over" or "game_over" if applicable.
     Triggers RL updates for "round_end" or "game_end" events.
     """
-    global game_data
+    game = get_game_instance()
+    current_game_data = game.game_data
     # Prevent re-scoring if round/game is already marked as over
-    if game_data.get("game_phase") in ["round_over", "game_over"]:
-        logging.warning(f"score_round() called when game_phase is already {game_data.get('game_phase')}. Points not re-awarded.")
+    if current_game_data.get("game_phase") in ["round_over", "game_over"]:
+        logging.warning(f"score_round() called when game_phase is already {current_game_data.get('game_phase')}. Points not re-awarded.")
         return
 
-    maker = game_data["maker"]
+    maker = current_game_data["maker"]
     if maker is None: # Should not happen if round is properly conducted
         logging.error("CRITICAL: score_round() called but maker is None. Aborting scoring for this round.")
-        game_data["message"] = "Error: Round scoring aborted due to missing maker."
-        game_data["game_phase"] = "round_over" # Mark round as over to allow progression
+        current_game_data["message"] = "Error: Round scoring aborted due to missing maker."
+        current_game_data["game_phase"] = "round_over" # Mark round as over to allow progression
         return
 
-    maker_tricks = game_data["round_tricks_won"][maker]
-    points_awarded = 0; message_suffix = ""; is_going_alone = game_data.get("going_alone", False)
+    maker_tricks = current_game_data["round_tricks_won"][maker]
+    points_awarded = 0; message_suffix = ""; is_going_alone = current_game_data.get("going_alone", False)
     if maker_tricks < 3:
         points_awarded = 2
-        for p_idx in range(game_data["num_players"]):
-            if p_idx != maker: game_data["scores"][p_idx] += points_awarded
+        for p_idx in range(current_game_data["num_players"]):
+            if p_idx != maker: current_game_data["scores"][p_idx] += points_awarded
         message_suffix = f"Maker euchred! Opponents score {points_awarded} points each."
     elif maker_tricks == 5:
         points_awarded = 4 if is_going_alone else 2
-        message_suffix = f"Maker ({game_data['player_identities'][maker]}) {'went alone and ' if is_going_alone else ''}marches, scoring {points_awarded} points!"
-        game_data["scores"][maker] += points_awarded
+        message_suffix = f"Maker ({current_game_data['player_identities'][maker]}) {'went alone and ' if is_going_alone else ''}marches, scoring {points_awarded} points!"
+        current_game_data["scores"][maker] += points_awarded
     elif maker_tricks >= 3:
         points_awarded = 1
-        message_suffix = f"Maker ({game_data['player_identities'][maker]}) {'went alone and ' if is_going_alone else ''}scores {points_awarded} point."
-        game_data["scores"][maker] += points_awarded
-    game_data["message"] = f"Round Over. {message_suffix}"
+        message_suffix = f"Maker ({current_game_data['player_identities'][maker]}) {'went alone and ' if is_going_alone else ''}scores {points_awarded} point."
+        current_game_data["scores"][maker] += points_awarded
+    current_game_data["message"] = f"Round Over. {message_suffix}"
 
     # First, definitively set phase to round_over.
-    logging.info(f"SCORE_ROUND: Current phase before update: {game_data.get('game_phase')}")
-    game_data["game_phase"] = "round_over"
-    logging.info(f"SCORE_ROUND: Phase updated to: {game_data.get('game_phase')}")
+    logging.info(f"SCORE_ROUND: Current phase before update: {current_game_data.get('game_phase')}")
+    current_game_data["game_phase"] = "round_over"
+    logging.info(f"SCORE_ROUND: Phase updated to: {current_game_data.get('game_phase')}")
 
     # Check for game winner
     game_winner_found = False
-    for p_idx, score in game_data["scores"].items():
+    for p_idx, score in current_game_data["scores"].items():
         if score >= 10:
-            logging.info(f"SCORE_ROUND: Game over condition met for P{p_idx}. Current phase before update: {game_data.get('game_phase')}")
-            game_data["game_phase"] = "game_over"
-            logging.info(f"SCORE_ROUND: Phase updated to: {game_data.get('game_phase')}")
-            game_data["message"] += f" {game_data['player_identities'][p_idx]} wins the game!"
+            logging.info(f"SCORE_ROUND: Game over condition met for P{p_idx}. Current phase before update: {current_game_data.get('game_phase')}")
+            current_game_data["game_phase"] = "game_over"
+            logging.info(f"SCORE_ROUND: Phase updated to: {current_game_data.get('game_phase')}")
+            current_game_data["message"] += f" {current_game_data['player_identities'][p_idx]} wins the game!"
             # --- RL Update for Game End ---
             game_event_data = {"game_winner_idx": p_idx}
-            for ai_p_id in rl_agents.keys(): # Update all AI agents
+            for ai_p_id in game.rl_agents.keys(): # Update all AI agents
                 process_rl_update(ai_p_id, "game_end", event_data=game_event_data)
             # --- End RL Update ---
             game_winner_found = True
@@ -1446,11 +1451,11 @@ def score_round():
         return # Game is over, no further round processing needed for RL here
 
     # If game is not over, it's just round_over. RL update for round end.
-    # game_data["game_phase"] is already "round_over" if no winner was found.
-    logging.info(f"SCORE_ROUND: Round ended, no game winner yet. Phase: {game_data.get('game_phase')}")
+    # current_game_data["game_phase"] is already "round_over" if no winner was found.
+    logging.info(f"SCORE_ROUND: Round ended, no game winner yet. Phase: {current_game_data.get('game_phase')}")
     # --- RL Update for Round End (if game not over) ---
-    round_event_data = {"round_tricks_won": game_data["round_tricks_won"].copy(), "maker": maker, "going_alone": is_going_alone}
-    for ai_p_id in rl_agents.keys(): # Update all AI agents based on round outcome
+    round_event_data = {"round_tricks_won": current_game_data["round_tricks_won"].copy(), "maker": maker, "going_alone": is_going_alone}
+    for ai_p_id in game.rl_agents.keys(): # Update all AI agents based on round outcome
         process_rl_update(ai_p_id, "round_end", event_data=round_event_data)
     # --- End RL Update ---
 
@@ -1473,20 +1478,32 @@ def start_game_api():
     If the first player to bid is an AI, it triggers the AI's bidding process.
     Returns the full game state as JSON.
     """
-    global game_data
-    # Use .get() for safer access to game_phase. If key is missing, treat as "setup".
-    current_phase = game_data.get("game_phase")
+    game = get_game_instance() # Get the game instance first
+    current_game_data = game.game_data # Work with game_data from the instance
+
+    # Use .get() for safer access to game_phase.
+    current_phase = current_game_data.get("game_phase")
     if current_phase is None or current_phase in ["game_over", "setup"]:
+        # initialize_game_data() will create a new Game instance and set it to _current_game_instance
+        # It also initializes its internal game_data, including a random dealer.
         initialize_game_data()
-        # initialize_game_data sets dealer randomly, so no need to set it again here
-        # game_data["dealer"] = random.randint(0, game_data["num_players"] - 1) # This line is now redundant
+        # After re-initialization, refresh our local current_game_data
+        game = get_game_instance() # Re-fetch the potentially new instance
+        current_game_data = game.game_data
     else:
-        game_data["dealer"] = (game_data["dealer"] + 1) % game_data["num_players"]
-    initialize_new_round()
-    if game_data["game_phase"] == "bidding_round_1" and game_data["current_player_turn"] != 0:
-        logging.info(f"Starting game/new round: P{game_data['current_player_turn']} (AI) to start bidding_round_1.")
-        process_ai_bid_action({'player_index': game_data["current_player_turn"], 'action': 'ai_bidding_round_1'})
-    return jsonify(game_data_to_json(game_data))
+        # If not a full reset, just advance the dealer
+        current_game_data["dealer"] = (current_game_data["dealer"] + 1) % current_game_data["num_players"]
+
+    initialize_new_round() # This function uses get_game_instance() internally
+
+    # Refresh current_game_data again after initialize_new_round as it modifies it
+    current_game_data = get_game_instance().game_data
+
+    if current_game_data["game_phase"] == "bidding_round_1" and current_game_data["current_player_turn"] != 0:
+        logging.info(f"Starting game/new round: P{current_game_data['current_player_turn']} (AI) to start bidding_round_1.")
+        process_ai_bid_action({'player_index': current_game_data["current_player_turn"], 'action': 'ai_bidding_round_1'})
+    # game_data_to_json now also uses get_game_instance()
+    return jsonify(game_data_to_json(current_game_data))
 
 @app.route('/api/submit_action', methods=['POST'])
 def submit_action_api():
@@ -1503,32 +1520,33 @@ def submit_action_api():
     if it becomes an AI's turn.
     Returns the updated game state as JSON.
     """
-    global game_data
+    game = get_game_instance()
+    current_game_data = game.game_data
     action_data = request.json
     player_idx = action_data.get('player_index')
     action_type = action_data.get('action')
-    current_phase = game_data["game_phase"]
-    logging.info(f"Received action: {action_type} from P{player_idx}. Current phase: {current_phase}. Current turn: P{game_data['current_player_turn']}.")
+    current_phase = current_game_data["game_phase"]
+    logging.info(f"Received action: {action_type} from P{player_idx}. Current phase: {current_phase}. Current turn: P{current_game_data['current_player_turn']}.")
     logging.debug(f"Action data: {action_data}")
 
     # Player validation
     if current_phase == 'maker_discard':
-        if player_idx != game_data.get("maker"):
+        if player_idx != current_game_data.get("maker"):
             return jsonify({"error": "Only the maker can discard the dummy hand."}), 400
-        if game_data["current_player_turn"] != player_idx: # Also ensure it's their turn
-             return jsonify({"error": f"Not your turn to discard dummy hand (P{game_data['current_player_turn']+1}'s turn)."}), 400
+        if current_game_data["current_player_turn"] != player_idx: # Also ensure it's their turn
+             return jsonify({"error": f"Not your turn to discard dummy hand (P{current_game_data['current_player_turn']+1}'s turn)."}), 400
     elif current_phase == 'prompt_go_alone':
-        if player_idx != game_data.get("maker"):
+        if player_idx != current_game_data.get("maker"):
             return jsonify({"error": "Only the maker can decide to go alone."}), 400
-        if game_data["current_player_turn"] != player_idx: # Also ensure it's their turn
-             return jsonify({"error": f"Not your turn to decide go alone (P{game_data['current_player_turn']+1}'s turn)."}), 400
+        if current_game_data["current_player_turn"] != player_idx: # Also ensure it's their turn
+             return jsonify({"error": f"Not your turn to decide go alone (P{current_game_data['current_player_turn']+1}'s turn)."}), 400
     elif current_phase in ['dealer_discard_one', 'dealer_must_discard_after_order_up']:
-        if player_idx != game_data["dealer"]:
-            return jsonify({"error": f"Only the dealer (P{game_data['dealer']+1}) can discard in this phase."}), 400
-        if game_data["current_player_turn"] != player_idx: # Dealer must also be current player
-            return jsonify({"error": f"Not your turn to discard as dealer (P{game_data['current_player_turn']+1}'s turn)."}), 400
-    elif game_data["current_player_turn"] != player_idx: # General turn check for other phases
-        return jsonify({"error": f"Not your turn (P{game_data['current_player_turn']+1} vs P{player_idx+1}). Current phase: {current_phase}"}), 400
+        if player_idx != current_game_data["dealer"]:
+            return jsonify({"error": f"Only the dealer (P{current_game_data['dealer']+1}) can discard in this phase."}), 400
+        if current_game_data["current_player_turn"] != player_idx: # Dealer must also be current player
+            return jsonify({"error": f"Not your turn to discard as dealer (P{current_game_data['current_player_turn']+1}'s turn)."}), 400
+    elif current_game_data["current_player_turn"] != player_idx: # General turn check for other phases
+        return jsonify({"error": f"Not your turn (P{current_game_data['current_player_turn']+1} vs P{player_idx+1}). Current phase: {current_phase}"}), 400
 
 
     # --- ACTION HANDLERS ---
@@ -1537,51 +1555,51 @@ def submit_action_api():
             logging.warning(f"Action 'order_up' by P{player_idx} rejected. Phase: {current_phase}, expected 'bidding_round_1'.")
             return jsonify({"error": "Cannot order up now."}), 400
 
-        if not game_data.get("original_up_card_for_round"):
+        if not current_game_data.get("original_up_card_for_round"):
             logging.error("CRITICAL: original_up_card_for_round is None when 'order_up' is called.")
             return jsonify({"error": "Critical error: Up-card data missing."}), 500
 
-        game_data["trump_suit"] = game_data["original_up_card_for_round"].suit
-        game_data["maker"] = player_idx # player_idx is the one who ordered up, becomes maker
-        logging.info(f"P{player_idx} ({game_data['player_identities'][player_idx]}) ordered up {SUITS_MAP[game_data['trump_suit']]}. Maker set to P{player_idx}. Trump: {game_data['trump_suit']}.")
-        current_message = f"{game_data['player_identities'][player_idx]} ordered up {SUITS_MAP[game_data['trump_suit']]}."
-        game_data["up_card_visible"] = False
-        game_data["up_card"] = None
+        current_game_data["trump_suit"] = current_game_data["original_up_card_for_round"].suit
+        current_game_data["maker"] = player_idx # player_idx is the one who ordered up, becomes maker
+        logging.info(f"P{player_idx} ({current_game_data['player_identities'][player_idx]}) ordered up {SUITS_MAP[current_game_data['trump_suit']]}. Maker set to P{player_idx}. Trump: {current_game_data['trump_suit']}.")
+        current_message = f"{current_game_data['player_identities'][player_idx]} ordered up {SUITS_MAP[current_game_data['trump_suit']]}."
+        current_game_data["up_card_visible"] = False
+        current_game_data["up_card"] = None
 
         # --- Dealer picks up card and discards ---
-        current_dealer_idx = game_data["dealer"]
-        dealer_hand = game_data["hands"][current_dealer_idx]
-        up_card_to_pickup = game_data["original_up_card_for_round"]
+        current_dealer_idx = current_game_data["dealer"]
+        dealer_hand = current_game_data["hands"][current_dealer_idx]
+        up_card_to_pickup = current_game_data["original_up_card_for_round"]
 
         dealer_hand.append(up_card_to_pickup)
-        logging.info(f"Dealer P{current_dealer_idx} ({game_data['player_identities'][current_dealer_idx]}) picked up {str(up_card_to_pickup)}. Hand size now: {len(dealer_hand)}.")
-        current_message += f" {game_data['player_identities'][current_dealer_idx]} (Dealer) picked up {str(up_card_to_pickup)}."
+        logging.info(f"Dealer P{current_dealer_idx} ({current_game_data['player_identities'][current_dealer_idx]}) picked up {str(up_card_to_pickup)}. Hand size now: {len(dealer_hand)}.")
+        current_message += f" {current_game_data['player_identities'][current_dealer_idx]} (Dealer) picked up {str(up_card_to_pickup)}."
 
         # Dealer discards one card
         if current_dealer_idx == 0: # Human Dealer
-            game_data["cards_to_discard_count"] = 1
-            game_data["current_player_turn"] = current_dealer_idx # Dealer's turn to discard
+            current_game_data["cards_to_discard_count"] = 1
+            current_game_data["current_player_turn"] = current_dealer_idx # Dealer's turn to discard
             if player_idx == current_dealer_idx: # Human dealer ordered themselves up
-                game_data["game_phase"] = "dealer_discard_one"
+                current_game_data["game_phase"] = "dealer_discard_one"
             else: # Another player ordered up, Human dealer (who is not the maker) must discard
-                game_data["game_phase"] = "dealer_must_discard_after_order_up"
-            current_message += f" {game_data['player_identities'][current_dealer_idx]} (Dealer) must discard 1 card."
-            logging.info(f"Human Dealer P{current_dealer_idx} to discard 1. Phase: {game_data['game_phase']}. Maker: P{game_data['maker']}.")
-            game_data["message"] = current_message # Update message here for human dealer
+                current_game_data["game_phase"] = "dealer_must_discard_after_order_up"
+            current_message += f" {current_game_data['player_identities'][current_dealer_idx]} (Dealer) must discard 1 card."
+            logging.info(f"Human Dealer P{current_dealer_idx} to discard 1. Phase: {current_game_data['game_phase']}. Maker: P{current_game_data['maker']}.")
+            current_game_data["message"] = current_message # Update message here for human dealer
 
         else: # AI Dealer
-            logging.info(f"AI Dealer P{current_dealer_idx} ({game_data['player_identities'][current_dealer_idx]}) must discard 1. Maker: P{game_data['maker']}. Trump: {game_data['trump_suit']}.")
+            logging.info(f"AI Dealer P{current_dealer_idx} ({current_game_data['player_identities'][current_dealer_idx]}) must discard 1. Maker: P{current_game_data['maker']}. Trump: {current_game_data['trump_suit']}.")
             if not dealer_hand:
                 logging.error(f"CRITICAL: AI Dealer P{current_dealer_idx} has empty hand after pickup.")
-                game_data["current_player_turn"] = game_data["maker"]
-                game_data["game_phase"] = "prompt_go_alone"
-                game_data["message"] = current_message + f" Critical error with AI dealer hand. {game_data['player_identities'][game_data['maker']]} (Maker) to decide go alone."
-                return jsonify(game_data_to_json(game_data))
+                current_game_data["current_player_turn"] = current_game_data["maker"]
+                current_game_data["game_phase"] = "prompt_go_alone"
+                current_game_data["message"] = current_message + f" Critical error with AI dealer hand. {current_game_data['player_identities'][current_game_data['maker']]} (Maker) to decide go alone."
+                return jsonify(game_data_to_json(current_game_data))
 
-            cards_to_discard_ai = get_ai_cards_to_discard(list(dealer_hand), 1, game_data["trump_suit"])
+            cards_to_discard_ai = get_ai_cards_to_discard(list(dealer_hand), 1, current_game_data["trump_suit"])
             card_to_discard_obj = None
             if not cards_to_discard_ai:
-                logging.error(f"AI Dealer P{current_dealer_idx} (hand: {[str(c) for c in dealer_hand]}) failed to select card to discard. Trump: {game_data['trump_suit']}. Discarding first card as fallback.")
+                logging.error(f"AI Dealer P{current_dealer_idx} (hand: {[str(c) for c in dealer_hand]}) failed to select card to discard. Trump: {current_game_data['trump_suit']}. Discarding first card as fallback.")
                 if dealer_hand: card_to_discard_obj = dealer_hand[0]
             else:
                 card_to_discard_obj = cards_to_discard_ai[0]
@@ -1590,29 +1608,29 @@ def submit_action_api():
                 try:
                     dealer_hand.remove(card_to_discard_obj)
                     logging.info(f"AI Dealer P{current_dealer_idx} discarded ({str(card_to_discard_obj)}). Hand size now: {len(dealer_hand)}.")
-                    current_message += f" {game_data['player_identities'][current_dealer_idx]} (AI Dealer) discarded {str(card_to_discard_obj)}."
+                    current_message += f" {current_game_data['player_identities'][current_dealer_idx]} (AI Dealer) discarded {str(card_to_discard_obj)}."
                 except ValueError:
                     found_card = next((c for c in dealer_hand if c.rank == card_to_discard_obj.rank and c.suit == card_to_discard_obj.suit), None)
                     if found_card:
                         dealer_hand.remove(found_card)
                         logging.info(f"AI Dealer P{current_dealer_idx} discarded ({str(card_to_discard_obj)}) by rank/suit match. Hand size now: {len(dealer_hand)}.")
-                        current_message += f" {game_data['player_identities'][current_dealer_idx]} (AI Dealer) discarded {str(card_to_discard_obj)}."
+                        current_message += f" {current_game_data['player_identities'][current_dealer_idx]} (AI Dealer) discarded {str(card_to_discard_obj)}."
                     else:
                         logging.error(f"AI Dealer P{current_dealer_idx} CRITICALLY failed to find/remove card {str(card_to_discard_obj)} for discard. Hand: {[str(c) for c in dealer_hand]}.")
             else:
                  logging.error(f"AI Dealer P{current_dealer_idx} had no card to discard selected or hand was empty.")
 
-            game_data["current_player_turn"] = game_data["maker"]
-            game_data["game_phase"] = "prompt_go_alone"
-            current_message += f" {game_data['player_identities'][game_data['maker']]} (Maker) to decide go alone."
-            logging.info(f"AI Dealer P{current_dealer_idx} discard processed. Phase 'prompt_go_alone'. Turn for P{game_data['maker']} (Maker).")
-            if game_data["maker"] != 0 : # If maker is AI, their logic in process_ai_bid_action would have called ai_decide_go_alone_and_proceed
-                 logging.debug(f"AI Maker P{game_data['maker']} will proceed with 'go alone' decision based on game state (likely already triggered if AI ordered up).")
+            current_game_data["current_player_turn"] = current_game_data["maker"]
+            current_game_data["game_phase"] = "prompt_go_alone"
+            current_message += f" {current_game_data['player_identities'][current_game_data['maker']]} (Maker) to decide go alone."
+            logging.info(f"AI Dealer P{current_dealer_idx} discard processed. Phase 'prompt_go_alone'. Turn for P{current_game_data['maker']} (Maker).")
+            if current_game_data["maker"] != 0 : # If maker is AI, their logic in process_ai_bid_action would have called ai_decide_go_alone_and_proceed
+                 logging.debug(f"AI Maker P{current_game_data['maker']} will proceed with 'go alone' decision based on game state (likely already triggered if AI ordered up).")
 
-        game_data["message"] = current_message # Assign accumulated message at the end
+        current_game_data["message"] = current_message # Assign accumulated message at the end
 
     elif action_type == 'dealer_must_discard_after_order_up':
-        if current_phase != 'dealer_must_discard_after_order_up' or player_idx != game_data["dealer"]:
+        if current_phase != 'dealer_must_discard_after_order_up' or player_idx != current_game_data["dealer"]:
             return jsonify({"error": "Not time/player for dealer to discard now."}), 400
         if player_idx != 0:
             return jsonify({"error": "dealer_must_discard_after_order_up is only for human player."}), 400
@@ -1621,7 +1639,7 @@ def submit_action_api():
         if len(cards_to_discard_dicts) != 1:
             return jsonify({"error": "Must discard exactly 1 card."}), 400
 
-        dealer_hand = game_data["hands"][game_data["dealer"]]
+        dealer_hand = current_game_data["hands"][current_game_data["dealer"]]
         card_to_remove_dict = cards_to_discard_dicts[0]
         actual_card_to_remove = next((c for c in dealer_hand if c.rank == card_to_remove_dict['rank'] and c.suit == card_to_remove_dict['suit']), None)
 
@@ -1629,40 +1647,40 @@ def submit_action_api():
             return jsonify({"error": "Card specified for discard not found in hand."}), 400
 
         dealer_hand.remove(actual_card_to_remove)
-        game_data["message"] = f"{game_data['player_identities'][player_idx]} (Dealer) discarded 1 card. "
+        current_game_data["message"] = f"{current_game_data['player_identities'][player_idx]} (Dealer) discarded 1 card. "
         logging.info(f"P{player_idx} (Dealer) discarded 1 in 'dealer_must_discard_after_order_up'. Hand size: {len(dealer_hand)}.")
 
-        game_data["game_phase"] = "prompt_go_alone"
-        game_data["cards_to_discard_count"] = 0
-        game_data["current_player_turn"] = game_data["maker"]
-        game_data["message"] += f"{game_data['player_identities'][game_data['maker']]} (Maker) to decide go alone."
-        logging.info(f"Phase changed to prompt_go_alone for P{game_data['maker']} (Maker).")
-        if game_data["maker"] != 0:
-            logging.info(f"Human dealer P{player_idx} discarded. AI Maker P{game_data['maker']}'s turn to decide go alone. Calling ai_decide_go_alone_and_proceed.")
-            ai_decide_go_alone_and_proceed(game_data["maker"])
+        current_game_data["game_phase"] = "prompt_go_alone"
+        current_game_data["cards_to_discard_count"] = 0
+        current_game_data["current_player_turn"] = current_game_data["maker"]
+        current_game_data["message"] += f"{current_game_data['player_identities'][current_game_data['maker']]} (Maker) to decide go alone."
+        logging.info(f"Phase changed to prompt_go_alone for P{current_game_data['maker']} (Maker).")
+        if current_game_data["maker"] != 0:
+            logging.info(f"Human dealer P{player_idx} discarded. AI Maker P{current_game_data['maker']}'s turn to decide go alone. Calling ai_decide_go_alone_and_proceed.")
+            ai_decide_go_alone_and_proceed(current_game_data["maker"])
 
 
     elif action_type == 'pass_bid':
         if current_phase != 'bidding_round_1':
             return jsonify({"error": "Cannot pass bid now."}), 400
         is_ai_action = (player_idx != 0)
-        game_data["message"] = f"{game_data['player_identities'][player_idx]}{' (AI)' if is_ai_action else ''} passes."
-        game_data['passes_on_upcard'].append(player_idx)
-        logging.info(f"P{player_idx}{' (AI)' if is_ai_action else ''} passed R1. Passes: {len(game_data['passes_on_upcard'])}/{game_data['num_players']}.")
-        if len(game_data['passes_on_upcard']) == game_data["num_players"]:
-            game_data["game_phase"] = "bidding_round_2"; game_data["up_card_visible"] = False
-            game_data["current_player_turn"] = (game_data["dealer"] + 1) % game_data["num_players"]
-            game_data["message"] += f" Up-card turned. {game_data['player_identities'][game_data['current_player_turn']]}'s turn to call."
-            game_data['passes_on_calling'] = []
-            if game_data["current_player_turn"] != 0:
-                process_ai_bid_action({'player_index': game_data["current_player_turn"], 'action': 'ai_bidding_round_2'})
+        current_game_data["message"] = f"{current_game_data['player_identities'][player_idx]}{' (AI)' if is_ai_action else ''} passes."
+        current_game_data['passes_on_upcard'].append(player_idx)
+        logging.info(f"P{player_idx}{' (AI)' if is_ai_action else ''} passed R1. Passes: {len(current_game_data['passes_on_upcard'])}/{current_game_data['num_players']}.")
+        if len(current_game_data['passes_on_upcard']) == current_game_data["num_players"]:
+            current_game_data["game_phase"] = "bidding_round_2"; current_game_data["up_card_visible"] = False
+            current_game_data["current_player_turn"] = (current_game_data["dealer"] + 1) % current_game_data["num_players"]
+            current_game_data["message"] += f" Up-card turned. {current_game_data['player_identities'][current_game_data['current_player_turn']]}'s turn to call."
+            current_game_data['passes_on_calling'] = []
+            if current_game_data["current_player_turn"] != 0:
+                process_ai_bid_action({'player_index': current_game_data["current_player_turn"], 'action': 'ai_bidding_round_2'})
         else:
-            bid_order = [(game_data["dealer"] + i + 1) % game_data["num_players"] for i in range(game_data["num_players"])]
+            bid_order = [(current_game_data["dealer"] + i + 1) % current_game_data["num_players"] for i in range(current_game_data["num_players"])]
             current_bidder_index_in_order = bid_order.index(player_idx)
-            game_data["current_player_turn"] = bid_order[(current_bidder_index_in_order + 1) % game_data["num_players"]]
-            game_data["message"] += f" {game_data['player_identities'][game_data['current_player_turn']]}'s turn."
-            if game_data["current_player_turn"] != 0:
-                 process_ai_bid_action({'player_index': game_data["current_player_turn"], 'action': 'ai_bidding_round_1'})
+            current_game_data["current_player_turn"] = bid_order[(current_bidder_index_in_order + 1) % current_game_data["num_players"]]
+            current_game_data["message"] += f" {current_game_data['player_identities'][current_game_data['current_player_turn']]}'s turn."
+            if current_game_data["current_player_turn"] != 0:
+                 process_ai_bid_action({'player_index': current_game_data["current_player_turn"], 'action': 'ai_bidding_round_1'})
 
     elif action_type == 'call_trump':
         if current_phase not in ['bidding_round_2', 'dealer_must_call']:
@@ -1670,36 +1688,36 @@ def submit_action_api():
         chosen_suit = action_data.get('suit')
         if not chosen_suit or chosen_suit not in SUITS:
             return jsonify({"error": "Invalid suit."}), 400
-        turned_down_suit = game_data["original_up_card_for_round"].suit
+        turned_down_suit = current_game_data["original_up_card_for_round"].suit
         if current_phase == 'bidding_round_2' and chosen_suit == turned_down_suit:
             return jsonify({"error": f"Cannot call turned down suit ({SUITS_MAP[turned_down_suit]})."}), 400
-        game_data["trump_suit"] = chosen_suit; game_data["maker"] = player_idx
-        game_data["message"] = f"{game_data['player_identities'][player_idx]} called {SUITS_MAP[chosen_suit]}."
-        game_data["up_card_visible"] = False; game_data["up_card"] = None
-        game_data["current_player_turn"] = game_data["maker"]; game_data["game_phase"] = "prompt_go_alone"
-        game_data["message"] += f" {game_data['player_identities'][game_data['maker']]} to decide go alone."
-        if game_data["maker"] != 0:
-            logging.info(f"AI P{game_data['maker']} (Maker after calling) to decide go alone. Calling ai_decide_go_alone_and_proceed.")
-            ai_decide_go_alone_and_proceed(game_data["maker"])
+        current_game_data["trump_suit"] = chosen_suit; current_game_data["maker"] = player_idx
+        current_game_data["message"] = f"{current_game_data['player_identities'][player_idx]} called {SUITS_MAP[chosen_suit]}."
+        current_game_data["up_card_visible"] = False; current_game_data["up_card"] = None
+        current_game_data["current_player_turn"] = current_game_data["maker"]; current_game_data["game_phase"] = "prompt_go_alone"
+        current_game_data["message"] += f" {current_game_data['player_identities'][current_game_data['maker']]} to decide go alone."
+        if current_game_data["maker"] != 0:
+            logging.info(f"AI P{current_game_data['maker']} (Maker after calling) to decide go alone. Calling ai_decide_go_alone_and_proceed.")
+            ai_decide_go_alone_and_proceed(current_game_data["maker"])
 
 
     elif action_type == 'dealer_discard_one':
-        if current_phase != 'dealer_discard_one' or player_idx != game_data["dealer"] or player_idx != game_data["maker"]:
+        if current_phase != 'dealer_discard_one' or player_idx != current_game_data["dealer"] or player_idx != current_game_data["maker"]:
             return jsonify({"error": "Not time/player for dealer_discard_one."}), 400
         if player_idx != 0:
             return jsonify({"error": "dealer_discard_one is only for human player when they are maker."}), 400
         cards_to_discard_dicts = action_data.get('cards', [])
         if len(cards_to_discard_dicts) != 1:
             return jsonify({"error": "Must discard exactly 1 card."}), 400
-        dealer_hand = game_data["hands"][game_data["dealer"]]
+        dealer_hand = current_game_data["hands"][current_game_data["dealer"]]
         card_to_remove_dict = cards_to_discard_dicts[0]
         actual_card_to_remove = next((c for c in dealer_hand if c.rank == card_to_remove_dict['rank'] and c.suit == card_to_remove_dict['suit']), None)
         if not actual_card_to_remove: return jsonify({"error": "Card specified for discard not found in hand."}), 400
         dealer_hand.remove(actual_card_to_remove)
-        game_data["message"] = f"{game_data['player_identities'][player_idx]} discarded 1 card. "
-        game_data["game_phase"] = "prompt_go_alone"; game_data["cards_to_discard_count"] = 0
-        game_data["current_player_turn"] = game_data["maker"]
-        game_data["message"] += "Choose to go alone or play with partner."
+        current_game_data["message"] = f"{current_game_data['player_identities'][player_idx]} discarded 1 card. "
+        current_game_data["game_phase"] = "prompt_go_alone"; current_game_data["cards_to_discard_count"] = 0
+        current_game_data["current_player_turn"] = current_game_data["maker"]
+        current_game_data["message"] += "Choose to go alone or play with partner."
         # No explicit AI call needed here as player_idx is human maker.
 
     elif action_type == 'maker_discard_one':
@@ -1707,34 +1725,34 @@ def submit_action_api():
         return jsonify({"error": "Deprecated action 'maker_discard_one'."}), 400
 
     elif action_type == 'pass_call':
-        if player_idx == game_data["dealer"] and current_phase == 'dealer_must_call':
+        if player_idx == current_game_data["dealer"] and current_phase == 'dealer_must_call':
             return jsonify({"error": "Dealer must call."}), 400
         if current_phase != 'bidding_round_2':
             return jsonify({"error": "Cannot pass call now."}), 400
-        game_data["message"] = f"{game_data['player_identities'][player_idx]} passes."
-        game_data['passes_on_calling'].append(player_idx)
-        logging.info(f"P{player_idx} passed R2. Passes: {len(game_data['passes_on_calling'])}/{game_data['num_players']-1}.")
-        bid_order_r2 = [(game_data["dealer"] + i + 1) % game_data["num_players"] for i in range(game_data["num_players"])]
-        if len(game_data['passes_on_calling']) == game_data["num_players"] - 1:
-            if all(p == game_data["dealer"] or p in game_data["passes_on_calling"] for p in range(game_data["num_players"])) and game_data["dealer"] not in game_data["passes_on_calling"]:
-                game_data["current_player_turn"] = game_data["dealer"]; game_data["game_phase"] = "dealer_must_call"
-                game_data["message"] += f" Dealer ({game_data['player_identities'][game_data['dealer']]}) is stuck."
-                if game_data["dealer"] != 0:
-                    process_ai_bid_action({'player_index': game_data["dealer"], 'action': 'ai_dealer_stuck_call'})
-                return jsonify(game_data_to_json(game_data))
+        current_game_data["message"] = f"{current_game_data['player_identities'][player_idx]} passes."
+        current_game_data['passes_on_calling'].append(player_idx)
+        logging.info(f"P{player_idx} passed R2. Passes: {len(current_game_data['passes_on_calling'])}/{current_game_data['num_players']-1}.")
+        bid_order_r2 = [(current_game_data["dealer"] + i + 1) % current_game_data["num_players"] for i in range(current_game_data["num_players"])]
+        if len(current_game_data['passes_on_calling']) == current_game_data["num_players"] - 1:
+            if all(p == current_game_data["dealer"] or p in current_game_data["passes_on_calling"] for p in range(current_game_data["num_players"])) and current_game_data["dealer"] not in current_game_data["passes_on_calling"]:
+                current_game_data["current_player_turn"] = current_game_data["dealer"]; current_game_data["game_phase"] = "dealer_must_call"
+                current_game_data["message"] += f" Dealer ({current_game_data['player_identities'][current_game_data['dealer']]}) is stuck."
+                if current_game_data["dealer"] != 0:
+                    process_ai_bid_action({'player_index': current_game_data["dealer"], 'action': 'ai_dealer_stuck_call'})
+                return jsonify(game_data_to_json(current_game_data))
         current_passer_index_in_order = bid_order_r2.index(player_idx)
-        game_data["current_player_turn"] = bid_order_r2[(current_passer_index_in_order + 1) % game_data["num_players"]]
-        game_data["message"] += f" {game_data['player_identities'][game_data['current_player_turn']]}'s turn."
-        if game_data["current_player_turn"] != 0:
-            process_ai_bid_action({'player_index': game_data["current_player_turn"], 'action': 'ai_bidding_round_2'})
+        current_game_data["current_player_turn"] = bid_order_r2[(current_passer_index_in_order + 1) % current_game_data["num_players"]]
+        current_game_data["message"] += f" {current_game_data['player_identities'][current_game_data['current_player_turn']]}'s turn."
+        if current_game_data["current_player_turn"] != 0:
+            process_ai_bid_action({'player_index': current_game_data["current_player_turn"], 'action': 'ai_bidding_round_2'})
 
     elif action_type == 'maker_discard':
-        if current_phase != 'maker_discard' or player_idx != game_data["maker"]:
+        if current_phase != 'maker_discard' or player_idx != current_game_data["maker"]:
             return jsonify({"error": "Not time/player for maker discard."}), 400
         cards_to_discard_dicts = action_data.get('cards', [])
-        if len(cards_to_discard_dicts) != game_data["cards_to_discard_count"]:
-            return jsonify({"error": f"Must discard {game_data['cards_to_discard_count']} cards."}), 400
-        maker_hand = game_data["hands"][game_data["maker"]]
+        if len(cards_to_discard_dicts) != current_game_data["cards_to_discard_count"]:
+            return jsonify({"error": f"Must discard {current_game_data['cards_to_discard_count']} cards."}), 400
+        maker_hand = current_game_data["hands"][current_game_data["maker"]]
         temp_hand_for_removal = list(maker_hand); cards_removed_success = True
         for card_dict in cards_to_discard_dicts:
             found_card_in_temp = next((c for c in temp_hand_for_removal if c.rank == card_dict['rank'] and c.suit == card_dict['suit']), None)
@@ -1745,81 +1763,81 @@ def submit_action_api():
                 else: cards_removed_success = False; break
             else: cards_removed_success = False; break
         if not cards_removed_success: return jsonify({"error": "Error processing discards."}), 400
-        game_data["message"] = f"{game_data['player_identities'][player_idx]} discarded {len(cards_to_discard_dicts)} cards."
-        game_data["cards_to_discard_count"] = 0; transition_to_play_phase()
+        current_game_data["message"] = f"{current_game_data['player_identities'][player_idx]} discarded {len(cards_to_discard_dicts)} cards."
+        current_game_data["cards_to_discard_count"] = 0; transition_to_play_phase()
 
     elif action_type == 'choose_go_alone' or action_type == 'choose_not_go_alone':
-        if current_phase != 'prompt_go_alone' or player_idx != game_data["maker"]:
+        if current_phase != 'prompt_go_alone' or player_idx != current_game_data["maker"]:
             return jsonify({"error": "Not time/player to choose go alone."}), 400
         chose_to_go_alone = (action_type == 'choose_go_alone')
-        game_data["going_alone"] = chose_to_go_alone
-        game_data["message"] = f"{game_data['player_identities'][player_idx]} (Maker) chose to {'go alone' if chose_to_go_alone else 'play with dummy hand'}."
+        current_game_data["going_alone"] = chose_to_go_alone
+        current_game_data["message"] = f"{current_game_data['player_identities'][player_idx]} (Maker) chose to {'go alone' if chose_to_go_alone else 'play with dummy hand'}."
         if chose_to_go_alone:
-            game_data["dummy_hand"] = []; transition_to_play_phase()
+            current_game_data["dummy_hand"] = []; transition_to_play_phase()
         else: # Chose NOT to go alone
-            maker_hand = game_data["hands"][game_data["maker"]]
-            if game_data.get("dummy_hand") and len(game_data["dummy_hand"]) == 5 : # Ensure dummy hand is valid
-                maker_hand.extend(game_data["dummy_hand"]); game_data["dummy_hand"] = []
-                game_data["cards_to_discard_count"] = 5; game_data["game_phase"] = "maker_discard"
-                game_data["current_player_turn"] = game_data["maker"]
-                game_data["message"] += " Picked up dummy hand. Now discard 5 cards."
-                if game_data["maker"] != 0: # AI Maker not going alone
-                    logging.info(f"AI P{game_data['maker']} not going alone. Calling ai_discard_five_cards.")
-                    ai_discard_five_cards(game_data["maker"])
+            maker_hand = current_game_data["hands"][current_game_data["maker"]]
+            if current_game_data.get("dummy_hand") and len(current_game_data["dummy_hand"]) == 5 : # Ensure dummy hand is valid
+                maker_hand.extend(current_game_data["dummy_hand"]); current_game_data["dummy_hand"] = []
+                current_game_data["cards_to_discard_count"] = 5; current_game_data["game_phase"] = "maker_discard"
+                current_game_data["current_player_turn"] = current_game_data["maker"]
+                current_game_data["message"] += " Picked up dummy hand. Now discard 5 cards."
+                if current_game_data["maker"] != 0: # AI Maker not going alone
+                    logging.info(f"AI P{current_game_data['maker']} not going alone. Calling ai_discard_five_cards.")
+                    ai_discard_five_cards(current_game_data["maker"])
             else:
                 logging.error(f"Maker P{player_idx} chose not to go alone, but dummy_hand invalid or missing. Proceeding as if going alone.")
-                game_data["going_alone"] = True # Fallback to going alone
-                game_data["message"] += " Error with dummy hand, proceeding as if going alone."
+                current_game_data["going_alone"] = True # Fallback to going alone
+                current_game_data["message"] += " Error with dummy hand, proceeding as if going alone."
                 transition_to_play_phase()
 
 
     elif action_type == 'play_card':
         if current_phase != 'playing_tricks': return jsonify({"error": "Cannot play card now."}), 400
-        if player_idx != game_data["current_player_turn"]: return jsonify({"error": "Not your turn to play."}), 400
+        if player_idx != current_game_data["current_player_turn"]: return jsonify({"error": "Not your turn to play."}), 400
         card_data = action_data.get('card');
         if not card_data: return jsonify({"error": "No card data provided."}), 400
-        player_hand = game_data["hands"][player_idx]
+        player_hand = current_game_data["hands"][player_idx]
         played_card = next((c for c in player_hand if c.rank == card_data['rank'] and c.suit == card_data['suit']), None)
         if not played_card: return jsonify({"error": "Card not in hand."}), 400
-        valid_plays = get_valid_plays(player_hand, game_data["current_trick_lead_suit"], game_data["trump_suit"])
+        valid_plays = get_valid_plays(player_hand, current_game_data["current_trick_lead_suit"], current_game_data["trump_suit"])
         if played_card not in valid_plays:
-            lead_suit_name = SUITS_MAP.get(game_data["current_trick_lead_suit"]) if game_data["current_trick_lead_suit"] else ""
-            required_suit_msg = f"Must follow suit ({lead_suit_name})." if game_data["current_trick_lead_suit"] and any(c.suit == game_data["current_trick_lead_suit"] for c in player_hand) else "Invalid play."
+            lead_suit_name = SUITS_MAP.get(current_game_data["current_trick_lead_suit"]) if current_game_data["current_trick_lead_suit"] else ""
+            required_suit_msg = f"Must follow suit ({lead_suit_name})." if current_game_data["current_trick_lead_suit"] and any(c.suit == current_game_data["current_trick_lead_suit"] for c in player_hand) else "Invalid play."
             return jsonify({"error": f"Invalid play. {required_suit_msg}"}), 400
 
         player_hand.remove(played_card)
-        game_data.get("played_cards_this_round", []).append(played_card) # Record played card
+        current_game_data.get("played_cards_this_round", []).append(played_card) # Record played card
 
-        game_data["trick_cards"].append({'player': player_idx, 'card': played_card})
-        game_data["message"] = f"{game_data['player_identities'][player_idx]} played {str(played_card)}."
-        if not game_data["current_trick_lead_suit"]: game_data["current_trick_lead_suit"] = get_effective_suit(played_card, game_data["trump_suit"])
-        num_players_in_trick = len(game_data["trick_cards"]); expected_cards_in_trick = game_data["num_players"]
+        current_game_data["trick_cards"].append({'player': player_idx, 'card': played_card})
+        current_game_data["message"] = f"{current_game_data['player_identities'][player_idx]} played {str(played_card)}."
+        if not current_game_data["current_trick_lead_suit"]: current_game_data["current_trick_lead_suit"] = get_effective_suit(played_card, current_game_data["trump_suit"])
+        num_players_in_trick = len(current_game_data["trick_cards"]); expected_cards_in_trick = current_game_data["num_players"]
         if num_players_in_trick == expected_cards_in_trick:
-            winner_idx = determine_trick_winner(game_data["trick_cards"], game_data["trump_suit"], game_data["current_trick_lead_suit"]) # Pass lead suit
-            game_data["round_tricks_won"][winner_idx] += 1
-            game_data["last_completed_trick"] = {"played_cards": [tc.copy() for tc in game_data["trick_cards"]], "winner_player_idx": winner_idx, "winner_name": game_data['player_identities'][winner_idx]}
+            winner_idx = determine_trick_winner(current_game_data["trick_cards"], current_game_data["trump_suit"], current_game_data["current_trick_lead_suit"]) # Pass lead suit
+            current_game_data["round_tricks_won"][winner_idx] += 1
+            current_game_data["last_completed_trick"] = {"played_cards": [tc.copy() for tc in current_game_data["trick_cards"]], "winner_player_idx": winner_idx, "winner_name": current_game_data['player_identities'][winner_idx]}
 
             # --- RL Update for all AI players who had pending actions for this trick ---
-            trick_event_data = {"trick_winner_idx": winner_idx, "played_cards_in_trick": game_data["last_completed_trick"]["played_cards"]}
-            for p_id in game_data["player_identities"].keys():
-                if p_id != 0 and game_data["rl_training_data"].get(p_id) and game_data["rl_training_data"][p_id].get("action_type") == "play_card":
+            trick_event_data = {"trick_winner_idx": winner_idx, "played_cards_in_trick": current_game_data["last_completed_trick"]["played_cards"]}
+            for p_id in current_game_data["player_identities"].keys():
+                if p_id != 0 and current_game_data["rl_training_data"].get(p_id) and current_game_data["rl_training_data"][p_id].get("action_type") == "play_card":
                     process_rl_update(p_id, "trick_end", event_data=trick_event_data)
             # --- End RL Update ---
 
-            game_data["message"] += f" {game_data['player_identities'][winner_idx]} wins the trick."
-            game_data["trick_cards"] = []; game_data["current_trick_lead_suit"] = None
-            game_data["current_player_turn"] = winner_idx; game_data["trick_leader"] = winner_idx
+            current_game_data["message"] += f" {current_game_data['player_identities'][winner_idx]} wins the trick."
+            current_game_data["trick_cards"] = []; current_game_data["current_trick_lead_suit"] = None
+            current_game_data["current_player_turn"] = winner_idx; current_game_data["trick_leader"] = winner_idx
             if is_round_over():
                 score_round() # score_round will handle its own RL updates
             else:
-                game_data["message"] += f" {game_data['player_identities'][winner_idx]} leads next trick."
+                current_game_data["message"] += f" {current_game_data['player_identities'][winner_idx]} leads next trick."
         else:
-            game_data["current_player_turn"] = (player_idx + 1) % game_data["num_players"]
-            game_data["message"] += f" Next turn: {game_data['player_identities'][game_data['current_player_turn']]}."
+            current_game_data["current_player_turn"] = (player_idx + 1) % current_game_data["num_players"]
+            current_game_data["message"] += f" Next turn: {current_game_data['player_identities'][current_game_data['current_player_turn']]}."
 
     # After any action, check if it's now an AI's turn to play a card or make a bidding/go_alone decision
-    current_phase_after_action = game_data["game_phase"]
-    current_player_after_action = game_data["current_player_turn"]
+    current_phase_after_action = current_game_data["game_phase"]
+    current_player_after_action = current_game_data["current_player_turn"]
 
     if current_player_after_action != 0: # If it's an AI's turn
         if current_phase_after_action == "playing_tricks" and not is_round_over():
@@ -1837,7 +1855,7 @@ def submit_action_api():
             # process_ai_bid_action({'player_index': current_player_after_action, 'action': f'ai_{current_phase_after_action}'})
             # AI bidding actions are now more self-contained or triggered directly.
             pass
-        elif current_phase_after_action == "prompt_go_alone" and current_player_after_action == game_data.get("maker"):
+        elif current_phase_after_action == "prompt_go_alone" and current_player_after_action == current_game_data.get("maker"):
             # This was the main fix: if it's AI maker's turn for prompt_go_alone, ensure it's handled.
             # This is now handled directly within submit_action's discard handlers and AI's own order_up/call_trump logic.
             # logging.info(f"Action by P{player_idx} resulted in AI Maker P{current_player_after_action}'s turn for prompt_go_alone. Triggering decision.")
@@ -1845,11 +1863,12 @@ def submit_action_api():
             pass
 
 
-    return jsonify(game_data_to_json(game_data))
+    return jsonify(game_data_to_json(current_game_data))
 
 def ai_discard_five_cards(ai_maker_idx):
-    global game_data #; time.sleep(0.5) # Removed AI delay
-    ai_hand = game_data["hands"][ai_maker_idx]; trump_suit = game_data["trump_suit"]
+    game = get_game_instance()
+    current_game_data = game.game_data
+    ai_hand = current_game_data["hands"][ai_maker_idx]; trump_suit = current_game_data["trump_suit"]
     logging.info(f"AI P{ai_maker_idx} (Maker) discarding 5 cards from {len(ai_hand)}. Trump: {trump_suit}.")
     if len(ai_hand) != 10:
         logging.error(f"AI P{ai_maker_idx} in ai_discard_five_cards, hand size {len(ai_hand)} not 10.")
@@ -1865,8 +1884,8 @@ def ai_discard_five_cards(ai_maker_idx):
         if actual_card_in_hand: ai_hand.remove(actual_card_in_hand)
         else: logging.error(f"AI P{ai_maker_idx} failed to find {str(card_obj_to_discard)} in hand for discard_five.")
     logging.info(f"AI P{ai_maker_idx} discarded. Hand size: {len(ai_hand)}. Hand: {[str(c) for c in ai_hand]}.")
-    game_data["message"] = f"{game_data['player_identities'][ai_maker_idx]} (AI) discarded {len(cards_to_discard_ai)} cards."
-    game_data["cards_to_discard_count"] = 0
+    current_game_data["message"] = f"{current_game_data['player_identities'][ai_maker_idx]} (AI) discarded {len(cards_to_discard_ai)} cards."
+    current_game_data["cards_to_discard_count"] = 0
     if len(ai_hand) != 5: logging.warning(f"AI P{ai_maker_idx} hand size {len(ai_hand)} after discard, expected 5.")
     transition_to_play_phase()
 
@@ -1885,10 +1904,11 @@ def ai_decide_go_alone_and_proceed(ai_maker_idx: int):
     Args:
         ai_maker_idx: The player ID of the AI maker.
     """
-    global game_data #; time.sleep(0.5) # Removed AI delay
+    game = get_game_instance()
+    current_game_data = game.game_data
     # Ensure it's actually this AI's turn and correct phase
-    if game_data["current_player_turn"] != ai_maker_idx or game_data["game_phase"] != "prompt_go_alone" or game_data["maker"] != ai_maker_idx:
-        logging.warning(f"ai_decide_go_alone_and_proceed called for P{ai_maker_idx} out of turn/phase. Current turn: P{game_data['current_player_turn']}, Phase: {game_data['game_phase']}, Maker: P{game_data['maker']}.")
+    if current_game_data["current_player_turn"] != ai_maker_idx or current_game_data["game_phase"] != "prompt_go_alone" or current_game_data["maker"] != ai_maker_idx:
+        logging.warning(f"ai_decide_go_alone_and_proceed called for P{ai_maker_idx} out of turn/phase. Current turn: P{current_game_data['current_player_turn']}, Phase: {current_game_data['game_phase']}, Maker: P{current_game_data['maker']}.")
         return
 
     current_agent = get_rl_agent(ai_maker_idx)
@@ -1897,9 +1917,9 @@ def ai_decide_go_alone_and_proceed(ai_maker_idx: int):
     if not current_agent:
         logging.error(f"RL Agent for P{ai_maker_idx} not found in ai_decide_go_alone_and_proceed. Using heuristic.")
         # Fallback to heuristic for going alone decision
-        ai_hand_fallback = game_data["hands"][ai_maker_idx]; trump_suit_fallback = game_data["trump_suit"]
+        ai_hand_fallback = current_game_data["hands"][ai_maker_idx]; trump_suit_fallback = current_game_data["trump_suit"]
         GO_ALONE_THRESHOLD = 220 # Heuristic threshold for hand strength to consider going alone
-        current_hand_strength = evaluate_potential_trump_strength(ai_hand_fallback, trump_suit_fallback, game_data)
+        current_hand_strength = evaluate_potential_trump_strength(ai_hand_fallback, trump_suit_fallback, current_game_data)
         num_trump_cards_in_hand = sum(1 for card in ai_hand_fallback if get_effective_suit(card, trump_suit_fallback) == trump_suit_fallback)
         has_both_bowers = any(c.rank == 'J' and c.suit == trump_suit_fallback for c in ai_hand_fallback) and \
                           any(c.rank == 'J' and c.suit == get_left_bower_suit(trump_suit_fallback) for c in ai_hand_fallback)
@@ -1908,37 +1928,37 @@ def ai_decide_go_alone_and_proceed(ai_maker_idx: int):
         logging.info(f"AI P{ai_maker_idx} (Maker Heuristic) decided to {'go alone' if chose_to_go_alone else 'play with dummy'}. Strength: {current_hand_strength}, Trumps: {num_trump_cards_in_hand}.")
     else:
         # RL Agent logic for going alone decision
-        state_dict = get_rl_state(ai_maker_idx, game_data)
-        game_data["rl_training_data"][ai_maker_idx] = {"state": state_dict, "action": None, "action_type": "decide_go_alone"}
+        state_dict = get_rl_state(ai_maker_idx, current_game_data)
+        current_game_data["rl_training_data"][ai_maker_idx] = {"state": state_dict, "action": None, "action_type": "decide_go_alone"}
 
         valid_actions = ["choose_go_alone", "choose_not_go_alone"]
         chosen_rl_action = current_agent.choose_action(state_dict, valid_actions)
-        game_data["rl_training_data"][ai_maker_idx]["action"] = chosen_rl_action # Store chosen action
+        current_game_data["rl_training_data"][ai_maker_idx]["action"] = chosen_rl_action # Store chosen action
         chose_to_go_alone = (chosen_rl_action == "choose_go_alone")
         logging.info(f"AI P{ai_maker_idx} (Maker RL) chose action: {chosen_rl_action}. Go alone: {chose_to_go_alone}")
 
     # Common logic post-decision
-    game_data["going_alone"] = chose_to_go_alone
-    game_data["message"] = f"{game_data['player_identities'][ai_maker_idx]} (AI Maker) chose to {'go alone' if chose_to_go_alone else 'play with dummy hand'}."
+    current_game_data["going_alone"] = chose_to_go_alone
+    current_game_data["message"] = f"{current_game_data['player_identities'][ai_maker_idx]} (AI Maker) chose to {'go alone' if chose_to_go_alone else 'play with dummy hand'}."
 
     # RL Update for the go_alone decision.
     if current_agent: # Ensure agent exists before trying to update
-        process_rl_update(ai_maker_idx, "bid_processed", event_data={"action_taken": game_data["rl_training_data"][ai_maker_idx]["action"], "is_go_alone_decision": True})
+        process_rl_update(ai_maker_idx, "bid_processed", event_data={"action_taken": current_game_data["rl_training_data"][ai_maker_idx]["action"], "is_go_alone_decision": True})
 
     if chose_to_go_alone:
-        game_data["dummy_hand"] = [] # Ensure dummy is not used
+        current_game_data["dummy_hand"] = [] # Ensure dummy is not used
         transition_to_play_phase()
     else: # Not going alone
-        ai_hand = game_data["hands"][ai_maker_idx] # Get current hand for modification
-        if game_data.get("dummy_hand") and len(game_data["dummy_hand"]) == 5:
-            ai_hand.extend(game_data["dummy_hand"]); game_data["dummy_hand"] = []
+        ai_hand = current_game_data["hands"][ai_maker_idx] # Get current hand for modification
+        if current_game_data.get("dummy_hand") and len(current_game_data["dummy_hand"]) == 5:
+            ai_hand.extend(current_game_data["dummy_hand"]); current_game_data["dummy_hand"] = []
             logging.info(f"AI P{ai_maker_idx} picked up dummy. Hand size: {len(ai_hand)}.")
-            game_data["cards_to_discard_count"] = 5
+            current_game_data["cards_to_discard_count"] = 5
             ai_discard_five_cards(ai_maker_idx) # This will discard and then call transition_to_play_phase
         else:
-            logging.error(f"AI P{ai_maker_idx} chose not to go alone, but dummy_hand invalid or missing. Dummy: {game_data.get('dummy_hand')}. Forcing 'go alone'.")
-            game_data["going_alone"] = True # Fallback to going alone
-            game_data["message"] += " Error with dummy hand, proceeding as if going alone."
+            logging.error(f"AI P{ai_maker_idx} chose not to go alone, but dummy_hand invalid or missing. Dummy: {current_game_data.get('dummy_hand')}. Forcing 'go alone'.")
+            current_game_data["going_alone"] = True # Fallback to going alone
+            current_game_data["message"] += " Error with dummy hand, proceeding as if going alone."
             transition_to_play_phase()
 
 
@@ -1959,11 +1979,13 @@ def process_ai_bid_action(ai_action_data: dict):
         ai_action_data: A dictionary containing 'player_index' and 'action' type
                         (e.g., 'ai_bidding_round_1', 'ai_dealer_stuck_call').
     """
-    global game_data #; time.sleep(0.5) # Removed AI delay
+    # global game_data #; time.sleep(0.5) # Removed AI delay
+    game = get_game_instance()
+    current_game_data = game.game_data
     player_idx = ai_action_data.get('player_index')
     action_type = ai_action_data.get('action') # e.g., 'ai_bidding_round_1', 'ai_bidding_round_2', 'ai_dealer_stuck_call'
 
-    logging.info(f"RL Processing AI P{player_idx} bid action: {action_type}. Phase: {game_data['game_phase']}.")
+    logging.info(f"RL Processing AI P{player_idx} bid action: {action_type}. Phase: {current_game_data['game_phase']}.")
 
     current_agent = get_rl_agent(player_idx)
     if not current_agent:
@@ -1971,10 +1993,10 @@ def process_ai_bid_action(ai_action_data: dict):
         # Potentially advance turn or handle error, for now, it will just not act.
         return
 
-    state_dict = get_rl_state(player_idx, game_data)
-    game_data["rl_training_data"][player_idx] = {"state": state_dict, "action": None, "action_type": action_type} # Store state
+    state_dict = get_rl_state(player_idx, current_game_data)
+    current_game_data["rl_training_data"][player_idx] = {"state": state_dict, "action": None, "action_type": action_type} # Store state
 
-    # ai_hand = game_data["hands"][player_idx] # Already part of state_dict if needed by agent
+    # ai_hand = current_game_data["hands"][player_idx] # Already part of state_dict if needed by agent
 
     chosen_game_action = None # This will be like 'order_up', 'pass_bid', 'call_trump:H', etc.
 
@@ -1982,114 +2004,114 @@ def process_ai_bid_action(ai_action_data: dict):
         # Valid actions: 'order_up' or 'pass_bid'
         valid_actions_for_agent = ["order_up", "pass_bid"]
         chosen_rl_action = current_agent.choose_action(state_dict, valid_actions_for_agent)
-        game_data["rl_training_data"][player_idx]["action"] = chosen_rl_action # Store chosen action
+        current_game_data["rl_training_data"][player_idx]["action"] = chosen_rl_action # Store chosen action
         logging.info(f"RL Agent P{player_idx} (R1 Bid) chose: {chosen_rl_action}")
 
         if chosen_rl_action == "order_up":
             # Perform the 'order_up' logic
-            up_card_obj = game_data["original_up_card_for_round"]
-            game_data["trump_suit"] = up_card_obj.suit
-            game_data["maker"] = player_idx
-            current_message = f"{game_data['player_identities'][player_idx]} (AI RL) ordered up {SUITS_MAP[game_data['trump_suit']]}."
-            game_data["up_card_visible"] = False; game_data["up_card"] = None
-            current_dealer_idx = game_data["dealer"]
-            dealer_hand_actual = game_data["hands"][current_dealer_idx]
-            up_card_to_pickup_actual = game_data["original_up_card_for_round"]
+            up_card_obj = current_game_data["original_up_card_for_round"]
+            current_game_data["trump_suit"] = up_card_obj.suit
+            current_game_data["maker"] = player_idx
+            current_message = f"{current_game_data['player_identities'][player_idx]} (AI RL) ordered up {SUITS_MAP[current_game_data['trump_suit']]}."
+            current_game_data["up_card_visible"] = False; current_game_data["up_card"] = None
+            current_dealer_idx = current_game_data["dealer"]
+            dealer_hand_actual = current_game_data["hands"][current_dealer_idx]
+            up_card_to_pickup_actual = current_game_data["original_up_card_for_round"]
             dealer_hand_actual.append(up_card_to_pickup_actual)
-            current_message += f" {game_data['player_identities'][current_dealer_idx]} (Dealer) picked up {str(up_card_to_pickup_actual)}."
+            current_message += f" {current_game_data['player_identities'][current_dealer_idx]} (Dealer) picked up {str(up_card_to_pickup_actual)}."
             logging.info(f"AI P{player_idx} (RL) ordered up. Dealer P{current_dealer_idx} picked up {str(up_card_to_pickup_actual)}.")
 
             if current_dealer_idx == 0: # Human dealer
-                game_data["cards_to_discard_count"] = 1
-                game_data["current_player_turn"] = current_dealer_idx
-                game_data["game_phase"] = "dealer_must_discard_after_order_up"
-                current_message += f" {game_data['player_identities'][current_dealer_idx]} (Dealer) must discard 1 card."
-                game_data["message"] = current_message
+                current_game_data["cards_to_discard_count"] = 1
+                current_game_data["current_player_turn"] = current_dealer_idx
+                current_game_data["game_phase"] = "dealer_must_discard_after_order_up"
+                current_message += f" {current_game_data['player_identities'][current_dealer_idx]} (Dealer) must discard 1 card."
+                current_game_data["message"] = current_message
             else: # AI Dealer discards
-                ai_dealer_hand = game_data["hands"][current_dealer_idx]
+                ai_dealer_hand = current_game_data["hands"][current_dealer_idx]
                 # AI dealer still uses heuristic for discard FOR NOW
                 # TODO: RL agent for discard if dealer is AI
-                card_to_discard_ai_dealer = get_ai_cards_to_discard(list(ai_dealer_hand), 1, game_data["trump_suit"])[0]
+                card_to_discard_ai_dealer = get_ai_cards_to_discard(list(ai_dealer_hand), 1, current_game_data["trump_suit"])[0]
                 try: ai_dealer_hand.remove(card_to_discard_ai_dealer)
                 except ValueError: # Handle if card object identity is different
                     found_c = next((c for c in ai_dealer_hand if c.rank == card_to_discard_ai_dealer.rank and c.suit == card_to_discard_ai_dealer.suit), None)
                     if found_c: ai_dealer_hand.remove(found_c)
-                current_message += f" {game_data['player_identities'][current_dealer_idx]} (AI Dealer) discarded 1 card."
-                game_data["game_phase"] = "prompt_go_alone"
-                game_data["current_player_turn"] = player_idx # The AI who ordered up is maker
-                current_message += f" {game_data['player_identities'][player_idx]} (Maker) to decide go alone."
-                game_data["message"] = current_message
+                current_message += f" {current_game_data['player_identities'][current_dealer_idx]} (AI Dealer) discarded 1 card."
+                current_game_data["game_phase"] = "prompt_go_alone"
+                current_game_data["current_player_turn"] = player_idx # The AI who ordered up is maker
+                current_message += f" {current_game_data['player_identities'][player_idx]} (Maker) to decide go alone."
+                current_game_data["message"] = current_message
                 # RL Update for this bid action
                 process_rl_update(player_idx, "bid_processed", event_data={"action_taken": chosen_rl_action, "became_maker": True})
                 ai_decide_go_alone_and_proceed(player_idx) # AI maker decides to go alone
             return
 
         else: # chosen_rl_action == "pass_bid" or fallback
-            game_data["message"] = f"{game_data['player_identities'][player_idx]} (AI RL) passes."
-            game_data['passes_on_upcard'].append(player_idx)
-            logging.info(f"AI P{player_idx} (RL) passed R1. Passes: {len(game_data['passes_on_upcard'])}/{game_data['num_players']}.")
+            current_game_data["message"] = f"{current_game_data['player_identities'][player_idx]} (AI RL) passes."
+            current_game_data['passes_on_upcard'].append(player_idx)
+            logging.info(f"AI P{player_idx} (RL) passed R1. Passes: {len(current_game_data['passes_on_upcard'])}/{current_game_data['num_players']}.")
 
             # RL Update for this pass action
             process_rl_update(player_idx, "bid_processed", event_data={"action_taken": chosen_rl_action, "became_maker": False})
 
-            if len(game_data['passes_on_upcard']) == game_data["num_players"]:
-                game_data["game_phase"] = "bidding_round_2"; game_data["up_card_visible"] = False
-                game_data["current_player_turn"] = (game_data["dealer"] + 1) % game_data["num_players"]
-                game_data["message"] += f" All passed. Up-card turned. {game_data['player_identities'][game_data['current_player_turn']]}'s turn to call."
-                game_data['passes_on_calling'] = []
-                if game_data["current_player_turn"] != 0: process_ai_bid_action({'player_index': game_data["current_player_turn"], 'action': 'ai_bidding_round_2'})
+            if len(current_game_data['passes_on_upcard']) == current_game_data["num_players"]:
+                current_game_data["game_phase"] = "bidding_round_2"; current_game_data["up_card_visible"] = False
+                current_game_data["current_player_turn"] = (current_game_data["dealer"] + 1) % current_game_data["num_players"]
+                current_game_data["message"] += f" All passed. Up-card turned. {current_game_data['player_identities'][current_game_data['current_player_turn']]}'s turn to call."
+                current_game_data['passes_on_calling'] = []
+                if current_game_data["current_player_turn"] != 0: process_ai_bid_action({'player_index': current_game_data["current_player_turn"], 'action': 'ai_bidding_round_2'})
             else:
-                bid_order = [(game_data["dealer"] + i + 1) % game_data["num_players"] for i in range(game_data["num_players"])]
+                bid_order = [(current_game_data["dealer"] + i + 1) % current_game_data["num_players"] for i in range(current_game_data["num_players"])]
                 current_bidder_index_in_order = bid_order.index(player_idx)
-                game_data["current_player_turn"] = bid_order[(current_bidder_index_in_order + 1) % game_data["num_players"]]
-                game_data["message"] += f" {game_data['player_identities'][game_data['current_player_turn']]}'s turn."
-                if game_data["current_player_turn"] != 0: process_ai_bid_action({'player_index': game_data["current_player_turn"], 'action': 'ai_bidding_round_1'})
+                current_game_data["current_player_turn"] = bid_order[(current_bidder_index_in_order + 1) % current_game_data["num_players"]]
+                current_game_data["message"] += f" {current_game_data['player_identities'][current_game_data['current_player_turn']]}'s turn."
+                if current_game_data["current_player_turn"] != 0: process_ai_bid_action({'player_index': current_game_data["current_player_turn"], 'action': 'ai_bidding_round_1'})
             return
 
     elif action_type == 'ai_bidding_round_2':
-        turned_down_suit = game_data["original_up_card_for_round"].suit
+        turned_down_suit = current_game_data["original_up_card_for_round"].suit
         valid_actions_for_agent = [f"call_trump:{s}" for s in SUITS if s != turned_down_suit] + ["pass_call"]
         chosen_rl_action = current_agent.choose_action(state_dict, valid_actions_for_agent) # e.g. "call_trump:H" or "pass_call"
-        game_data["rl_training_data"][player_idx]["action"] = chosen_rl_action # Store chosen action
+        current_game_data["rl_training_data"][player_idx]["action"] = chosen_rl_action # Store chosen action
         logging.info(f"RL Agent P{player_idx} (R2 Bid) chose: {chosen_rl_action}")
 
         if chosen_rl_action.startswith("call_trump:"):
             called_suit = chosen_rl_action.split(":")[1]
-            game_data["trump_suit"] = called_suit
-            game_data["maker"] = player_idx
-            game_data["message"] = f"{game_data['player_identities'][player_idx]} (AI RL) called {SUITS_MAP[game_data['trump_suit']]}."
-            game_data["up_card_visible"] = False; game_data["up_card"] = None
-            game_data["game_phase"] = "prompt_go_alone"
-            game_data["current_player_turn"] = player_idx # The AI who called is maker
+            current_game_data["trump_suit"] = called_suit
+            current_game_data["maker"] = player_idx
+            current_game_data["message"] = f"{current_game_data['player_identities'][player_idx]} (AI RL) called {SUITS_MAP[current_game_data['trump_suit']]}."
+            current_game_data["up_card_visible"] = False; current_game_data["up_card"] = None
+            current_game_data["game_phase"] = "prompt_go_alone"
+            current_game_data["current_player_turn"] = player_idx # The AI who called is maker
             process_rl_update(player_idx, "bid_processed", event_data={"action_taken": chosen_rl_action, "became_maker": True})
             ai_decide_go_alone_and_proceed(player_idx) # AI maker decides to go alone
             return
 
         else: # chosen_rl_action == "pass_call" or fallback
-            game_data["message"] = f"{game_data['player_identities'][player_idx]} (AI RL) passes round 2."
-            game_data['passes_on_calling'].append(player_idx)
-            logging.info(f"AI P{player_idx} (RL) passed R2. Passes: {len(game_data['passes_on_calling'])}/{game_data['num_players']-1}.")
+            current_game_data["message"] = f"{current_game_data['player_identities'][player_idx]} (AI RL) passes round 2."
+            current_game_data['passes_on_calling'].append(player_idx)
+            logging.info(f"AI P{player_idx} (RL) passed R2. Passes: {len(current_game_data['passes_on_calling'])}/{current_game_data['num_players']-1}.")
             process_rl_update(player_idx, "bid_processed", event_data={"action_taken": chosen_rl_action, "became_maker": False})
 
-            bid_order_r2 = [(game_data["dealer"] + i + 1) % game_data["num_players"] for i in range(game_data["num_players"])]
+            bid_order_r2 = [(current_game_data["dealer"] + i + 1) % current_game_data["num_players"] for i in range(current_game_data["num_players"])]
             # Check if dealer is stuck (all others passed in R2)
-            if len(game_data['passes_on_calling']) == game_data["num_players"] - 1: # All players except dealer passed
+            if len(current_game_data['passes_on_calling']) == current_game_data["num_players"] - 1: # All players except dealer passed
                  # This check ensures that it's actually the dealer's turn to be stuck.
                  # It implies all other non-dealer players are in passes_on_calling.
-                if game_data["dealer"] not in game_data["passes_on_calling"]: # Dealer hasn't passed (obviously, they can't pass if stuck)
-                    game_data["current_player_turn"] = game_data["dealer"]
-                    game_data["game_phase"] = "dealer_must_call"
-                    game_data["message"] += f" Dealer ({game_data['player_identities'][game_data['dealer']]}) is stuck."
-                    if game_data["dealer"] != 0: # If dealer is AI
-                        process_ai_bid_action({'player_index': game_data["dealer"], 'action': 'ai_dealer_stuck_call'})
+                if current_game_data["dealer"] not in current_game_data["passes_on_calling"]: # Dealer hasn't passed (obviously, they can't pass if stuck)
+                    current_game_data["current_player_turn"] = current_game_data["dealer"]
+                    current_game_data["game_phase"] = "dealer_must_call"
+                    current_game_data["message"] += f" Dealer ({current_game_data['player_identities'][current_game_data['dealer']]}) is stuck."
+                    if current_game_data["dealer"] != 0: # If dealer is AI
+                        process_ai_bid_action({'player_index': current_game_data["dealer"], 'action': 'ai_dealer_stuck_call'})
                     # If dealer is human, UI will prompt them.
                     return
 
             # If not stuck, move to next player for R2 bidding
             current_passer_index_in_order = bid_order_r2.index(player_idx)
-            next_player_candidate = bid_order_r2[(current_passer_index_in_order + 1) % game_data["num_players"]]
+            next_player_candidate = bid_order_r2[(current_passer_index_in_order + 1) % current_game_data["num_players"]]
 
-            if next_player_candidate == game_data["dealer"] and len(game_data['passes_on_calling']) < game_data["num_players"]-1 :
+            if next_player_candidate == current_game_data["dealer"] and len(current_game_data['passes_on_calling']) < current_game_data["num_players"]-1 :
                  # This means we've looped through non-dealers and now it's dealer's turn, but they are not yet stuck
                  # This case might be complex, ensure dealer is not skipped if they are next and not stuck.
                  # The original logic for "dealer_must_call" should handle if it's their turn and they are stuck.
@@ -2097,14 +2119,14 @@ def process_ai_bid_action(ai_action_data: dict):
                  pass
 
 
-            game_data["current_player_turn"] = next_player_candidate
-            game_data["message"] += f" {game_data['player_identities'][game_data['current_player_turn']]}'s turn."
-            if game_data["current_player_turn"] != 0:
-                process_ai_bid_action({'player_index': game_data["current_player_turn"], 'action': 'ai_bidding_round_2'})
+            current_game_data["current_player_turn"] = next_player_candidate
+            current_game_data["message"] += f" {current_game_data['player_identities'][current_game_data['current_player_turn']]}'s turn."
+            if current_game_data["current_player_turn"] != 0:
+                process_ai_bid_action({'player_index': current_game_data["current_player_turn"], 'action': 'ai_bidding_round_2'})
             return
 
     elif action_type == 'ai_dealer_stuck_call':
-        turned_down_suit = game_data["original_up_card_for_round"].suit
+        turned_down_suit = current_game_data["original_up_card_for_round"].suit
         valid_actions_for_agent = [f"call_trump:{s}" for s in SUITS if s != turned_down_suit]
         if not valid_actions_for_agent: # Should not happen in Euchre
             logging.error(f"AI Dealer P{player_idx} stuck but no valid suits to call. This is a bug.")
@@ -2112,15 +2134,15 @@ def process_ai_bid_action(ai_action_data: dict):
             chosen_suit_by_ai = random.choice([s for s in SUITS if s != turned_down_suit])
         else:
             chosen_rl_action = current_agent.choose_action(state_dict, valid_actions_for_agent) # e.g. "call_trump:H"
-            game_data["rl_training_data"][player_idx]["action"] = chosen_rl_action # Store chosen action
+            current_game_data["rl_training_data"][player_idx]["action"] = chosen_rl_action # Store chosen action
             chosen_suit_by_ai = chosen_rl_action.split(":")[1]
 
         logging.info(f"RL Agent P{player_idx} (Dealer Stuck) chose to call: {chosen_suit_by_ai}")
-        game_data["trump_suit"] = chosen_suit_by_ai
-        game_data["maker"] = player_idx
-        game_data["message"] = f"{game_data['player_identities'][player_idx]} (AI RL Dealer) called {SUITS_MAP[game_data['trump_suit']]}."
-        game_data["game_phase"] = "prompt_go_alone"
-        game_data["current_player_turn"] = player_idx # The AI dealer is maker
+        current_game_data["trump_suit"] = chosen_suit_by_ai
+        current_game_data["maker"] = player_idx
+        current_game_data["message"] = f"{current_game_data['player_identities'][player_idx]} (AI RL Dealer) called {SUITS_MAP[current_game_data['trump_suit']]}."
+        current_game_data["game_phase"] = "prompt_go_alone"
+        current_game_data["current_player_turn"] = player_idx # The AI dealer is maker
         process_rl_update(player_idx, "bid_processed", event_data={"action_taken": chosen_rl_action, "became_maker": True})
         ai_decide_go_alone_and_proceed(player_idx) # AI maker decides to go alone
         return
@@ -2130,70 +2152,66 @@ def process_ai_bid_action(ai_action_data: dict):
 
 @app.route('/api/get_current_state', methods=['GET'])
 def get_current_state_api():
-    global game_data; logging.info("API: /api/get_current_state called.")
-    return jsonify(game_data_to_json(game_data))
+    game = get_game_instance()
+    current_game_data = game.game_data
+    logging.info("API: /api/get_current_state called.")
+    return jsonify(game_data_to_json(current_game_data))
 
 @app.route('/api/ai_play_turn', methods=['POST'])
 def ai_play_turn_api():
-    global game_data
-    logging.info("Received request for AI to play turn endpoint.") # Added 'endpoint' for clarity
+    game = get_game_instance()
+    # Use a copy for initial checks based on the state when the request arrived.
+    # Subsequent operations will use the live game.game_data via functions that call get_game_instance().
+    current_game_data_snapshot = game.game_data.copy()
+    logging.info("Received request for AI to play turn endpoint.")
 
-    # It's crucial to read the game state ONCE at the beginning of the request
-    # to ensure all decisions within this function call are based on a consistent snapshot.
-    current_game_state_snapshot = game_data.copy() # Shallow copy for consistent read
-    current_player = current_game_state_snapshot.get("current_player_turn")
-    current_phase = current_game_state_snapshot.get("game_phase")
+    current_player = current_game_data_snapshot.get("current_player_turn")
+    current_phase_snapshot = current_game_data_snapshot.get("game_phase") # Phase at the time of request
 
-    logging.info(f"AI Play Turn: Current player P{current_player}, Phase: {current_phase}")
+    logging.info(f"AI Play Turn (Snapshot): Current player P{current_player}, Phase: {current_phase_snapshot}")
 
-    if current_player == 0:
+    if current_player == 0: # Player 0 is human
         logging.warning("AI play rejected: Not AI's turn (P0).")
-        return jsonify({"error": "Not AI's turn.", "game_state": game_data_to_json(game_data)}), 400
+        # game_data_to_json will fetch the latest state from game instance
+        return jsonify({"error": "Not AI's turn.", "game_state": game_data_to_json(None)}), 400
 
-    if current_phase != "playing_tricks":
-        logging.warning(f"AI play rejected: Phase is '{current_phase}', not 'playing_tricks'.")
-        # Return current state along with the error, so client can update if needed.
+    if current_phase_snapshot != "playing_tricks":
+        logging.warning(f"AI play rejected: Phase (snapshot) is '{current_phase_snapshot}', not 'playing_tricks'.")
         return jsonify({
-            "error": f"AI cannot play. Game phase is '{current_phase}', not 'playing_tricks'.",
-            "game_state": game_data_to_json(game_data)
-        }), 400 # Crucially, this is a 400 error.
+            "error": f"AI cannot play. Game phase (snapshot) is '{current_phase_snapshot}', not 'playing_tricks'.",
+            "game_state": game_data_to_json(None) # Return fresh state
+        }), 400
 
-    # If phase is "playing_tricks" but trick count indicates round is over,
-    # this implies a state discrepancy that score_round() should resolve.
-    # This block handles the case where the round ended numerically but phase hasn't caught up yet
-    # for this specific request's view (less likely if state is truly global and consistent).
-    if is_round_over(): # is_round_over() uses the global game_data
-        logging.warning(f"AI Play Turn: Initial phase was '{current_phase}' but is_round_over() is true. Attempting to correct state.")
-        logging.info(f"AI Play Turn: game_phase BEFORE calling score_round() in is_round_over block: {game_data.get('game_phase')}")
-        # Ensure score_round is called to update the phase in the global game_data
-        # score_round() now has a guard against multiple scoring.
-        score_round() # score_round updates global game_data if necessary
-        logging.info(f"AI Play Turn: game_phase AFTER calling score_round() in is_round_over block: {game_data.get('game_phase')}")
+    # is_round_over, score_round, process_ai_play_card, and game_data_to_json
+    # will all use get_game_instance().game_data internally to get the current live state.
+    if is_round_over(): # Checks live state
+        logging.warning(f"AI Play Turn: Initial phase (snapshot) was '{current_phase_snapshot}' but is_round_over() (live) is true. Attempting to correct state.")
+        live_phase_before_score = get_game_instance().game_data.get('game_phase')
+        logging.info(f"AI Play Turn: Live game_phase BEFORE calling score_round() in is_round_over block: {live_phase_before_score}")
 
-        # Re-fetch the game phase after score_round() has potentially updated it.
-        current_phase = game_data.get("game_phase") # This re-fetch is crucial
-        logging.info(f"AI Play Turn: Re-fetched current_phase after score_round() is '{current_phase}'.")
+        score_round() # This will operate on and potentially change live game.game_data
 
-        if current_phase in ["round_over", "game_over"]:
-            logging.info(f"AI Play Turn: Round/Game is over (phase: {current_phase}). Not processing AI card play. Returning state.")
-            return jsonify(game_data_to_json(game_data))
+        live_phase_after_score = get_game_instance().game_data.get("game_phase")
+        logging.info(f"AI Play Turn: Live game_phase AFTER calling score_round() in is_round_over block: {live_phase_after_score}")
+
+        if live_phase_after_score in ["round_over", "game_over"]:
+            logging.info(f"AI Play Turn: Round/Game is over (live phase: {live_phase_after_score}). Not processing AI card play. Returning state.")
+            return jsonify(game_data_to_json(None)) # Return fresh state
         else:
-            # This case should ideally not be reached if is_round_over() is true and score_round() works.
-            # It implies is_round_over() was true, but score_round didn't transition to a terminal phase.
-            logging.warning(f"AI Play Turn: is_round_over() was true, but phase is still '{current_phase}'. Proceeding cautiously with AI play.")
+            # This case implies is_round_over() was true, but score_round didn't transition to a terminal phase.
+            logging.warning(f"AI Play Turn: is_round_over() (live) was true, but live phase is still '{live_phase_after_score}'. Proceeding cautiously with AI play.")
             # Fall-through to process_ai_play_card, but this is an unusual state.
 
-    # If we reach here: current_phase should be "playing_tricks" and the round not numerically over,
-    # OR is_round_over() was true but phase didn't update to terminal (logged above).
-    if current_phase == "playing_tricks": # Explicitly check again
-        logging.info(f"Processing AI P{current_player}'s card play. Phase: {current_phase}")
-        process_ai_play_card(current_player) # This function will modify global game_data
-                                             # It might call score_round() if this play ends the round.
+    # Re-check phase from live data before playing card, as score_round might have changed it.
+    final_check_live_phase = get_game_instance().game_data.get("game_phase")
+    if final_check_live_phase == "playing_tricks":
+        # current_player is from the snapshot, which is fine as turns don't change mid-request for this API's purpose.
+        logging.info(f"Processing AI P{current_player}'s card play. Live Phase: {final_check_live_phase}")
+        process_ai_play_card(current_player) # Modifies live game.game_data
     else:
-        logging.warning(f"AI Play Turn: Aborting AI card play because current_phase is '{current_phase}', not 'playing_tricks' after checks.")
+        logging.warning(f"AI Play Turn: Aborting AI card play because live phase is '{final_check_live_phase}', not 'playing_tricks' after checks.")
 
-    # The response will be based on the state of global game_data AFTER any processing.
-    return jsonify(game_data_to_json(game_data))
+    return jsonify(game_data_to_json(None)) # Pass None to indicate game_data_to_json should fetch fresh
 
 def game_data_to_json(current_game_data_arg: dict) -> dict:
     """
@@ -2209,9 +2227,16 @@ def game_data_to_json(current_game_data_arg: dict) -> dict:
     Returns:
         A new dictionary where Card objects are replaced by their dict versions.
     """
-    global game_data # Access the true global game_data for the most current state
-    # Create a shallow copy to modify for JSON serialization without altering the original Card objects in game_data.
-    json_safe_data = game_data.copy() # Ensures we are working with the global state
+    # If current_game_data_arg is provided and not None, use it. Otherwise, fetch from instance.
+    # This provides flexibility but defaults to the live instance data if arg is None (e.g. from ai_play_turn_api).
+    # For consistency with other API endpoints that now pass current_game_data,
+    # we will prioritize the argument if it's a dictionary.
+    # However, the most robust change across the board is to always fetch fresh from get_game_instance().
+    game = get_game_instance()
+    source_data = game.game_data
+
+    # Create a shallow copy to modify for JSON serialization
+    json_safe_data = source_data.copy()
 
     # Convert Card objects in various parts of the game state to their dict representations
     if json_safe_data.get('deck'): json_safe_data['deck'] = [card.to_dict() for card in json_safe_data['deck']]
