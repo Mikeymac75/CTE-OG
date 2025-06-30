@@ -35,6 +35,15 @@ MIN_EPSILON = 0.01
 
 class RLAgent:
     def __init__(self, player_id, learning_rate=DEFAULT_LEARNING_RATE, discount_factor=DEFAULT_DISCOUNT_FACTOR, epsilon=DEFAULT_EPSILON):
+        """
+        Initializes the Reinforcement Learning Agent.
+
+        Args:
+            player_id: The unique identifier for the player.
+            learning_rate: The learning rate (alpha) for Q-learning.
+            discount_factor: The discount factor (gamma) for future rewards.
+            epsilon: The initial exploration rate for epsilon-greedy strategy.
+        """
         self.player_id = player_id
         self.lr = learning_rate
         self.gamma = discount_factor
@@ -58,6 +67,13 @@ class RLAgent:
         return conn
 
     def set_training_mode(self, mode):
+        """
+        Sets the agent's training mode.
+
+        Args:
+            mode (bool): True to enable training (exploration and learning),
+                         False for exploitation-only mode.
+        """
         self.training_mode = mode
         if not mode:
             self.epsilon = 0 # No exploration if not training
@@ -65,12 +81,24 @@ class RLAgent:
     # load_q_table and save_q_table are removed as we operate directly on DB
 
     def _serialize_state(self, state_dict):
-        """Converts a state dictionary to a canonical string representation for Q-table keys."""
+        """
+        Converts a state dictionary to a canonical JSON string representation.
+        This is used as a key in the Q-table. Sorting keys ensures consistency.
+        """
         # Sort by keys to ensure canonical representation
         return json.dumps(state_dict, sort_keys=True)
 
     def get_q_value(self, state_key, action_key):
-        """Fetches Q-value from SQLite."""
+        """
+        Retrieves the Q-value for a given state-action pair from the SQLite database.
+
+        Args:
+            state_key (str): The serialized string representation of the state.
+            action_key (str): The serialized string representation of the action.
+
+        Returns:
+            float: The Q-value, or 0.0 if the state or action is not found.
+        """
         cursor = self.db_conn.cursor()
         cursor.execute("SELECT actions_q_values FROM q_values WHERE state_key = ?", (state_key,))
         row = cursor.fetchone()
@@ -128,6 +156,17 @@ class RLAgent:
         return str(action) # For simple actions like "pass_bid", "order_up"
 
     def update_q_table(self, state_dict, action, reward, next_state_dict, next_valid_actions):
+        """
+        Updates the Q-table using the Q-learning formula.
+        Q(s,a) = Q(s,a) + lr * [reward + gamma * max_a'(Q(s',a')) - Q(s,a)]
+
+        Args:
+            state_dict (dict): The state from which the action was taken.
+            action: The action taken by the agent.
+            reward (float): The reward received for taking the action.
+            next_state_dict (dict): The resulting state after the action.
+            next_valid_actions (list): A list of valid actions in the next_state.
+        """
         if not self.training_mode:
             return
 
@@ -213,15 +252,118 @@ class Card:
 def create_deck():
     return [Card(s, r) for s in SUITS for r in RANKS]
 
-# --- Game State ---
-game_data = {}
-rl_agents = {} # To store RL agents, keyed by player_id (1 and 2 for AI)
+# --- Game State Management ---
+
+class Game:
+    """
+    Encapsulates all game state and related logic for a single Euchre game.
+    This includes player hands, scores, current phase, deck, RL agents, etc.
+    """
+    def __init__(self):
+        self.game_data = {}
+        self.rl_agents = {}
+        self._initialize_game_and_agents() # Initialize upon creation
+
+    def _initialize_game_and_agents(self):
+        """
+        Initializes or resets the game_data and rl_agents for a new game.
+        This function sets up the game structure, player identities, scores,
+        and RL agent parameters (like epsilon) to their default starting values.
+        """
+        logging.info("Game class: Initializing game data and RL agents.")
+
+        num_players = 3
+        player_identities = {
+            0: "Player 0 (You)",
+            1: "Player 1 (AI)",
+            2: "Player 2 (AI)"
+        }
+
+        # Initialize RL agents
+        self.rl_agents.clear() # Clear any existing agents if re-initializing
+        for pid, name in player_identities.items():
+            if pid not in self.rl_agents:
+                logging.info(f"Game class: Creating RLAgent for player {pid} ({name})")
+                self.rl_agents[pid] = RLAgent(player_id=pid) # RLAgent class needs to be defined before Game
+
+        # Reset epsilon for agents at the start of each new game
+        for agent_id, agent in self.rl_agents.items():
+            agent.epsilon = DEFAULT_EPSILON # Assuming DEFAULT_EPSILON is accessible
+            agent.set_training_mode(True)
+            if hasattr(agent, 'last_action_info'):
+                del agent.last_action_info
+
+        self.game_data = {
+            "deck": [], "hands": {p: [] for p in range(num_players)}, "dummy_hand": [],
+            "scores": {p: 0 for p in range(num_players)}, "dealer": random.randint(0, num_players - 1),
+            "rl_training_data": {p_id: {} for p_id in self.rl_agents.keys()}, # Store per-agent training info
+            "trump_suit": None, "up_card": None, "up_card_visible": False,
+            "current_player_turn": -1, "maker": None, "going_alone": False,
+            "trick_cards": [], "current_trick_lead_suit": None,
+            "trick_leader": -1, "round_tricks_won": {p: 0 for p in range(num_players)},
+            "game_phase": "setup", # Initial phase
+            "message": "Welcome! Click 'Start New Round'.",
+            "player_identities": player_identities,
+            "num_players": num_players,
+            "passes_on_upcard": [], "passes_on_calling": [],
+            "cards_to_discard_count": 0,
+            "original_up_card_for_round": None,
+            "last_completed_trick": None,
+            "played_cards_this_round": [] # Initialize here
+        }
+        logging.debug(f"Game class: Initialization complete. game_data keys: {list(self.game_data.keys())}")
+
+    # --- Convenience accessors, more can be added as needed ---
+    def get_data(self):
+        """Returns the raw game_data dictionary."""
+        return self.game_data
+
+    def get_agent(self, player_id):
+        """Retrieves the RLAgent instance for a given player ID."""
+        return self.rl_agents.get(player_id)
+
+# Global instance of the Game class
+# This is an intermediate step. Ideally, this would be managed by Flask's app context (g object)
+# or passed around explicitly. For now, a single global instance simplifies transition.
+_current_game_instance = None
+
+def get_game_instance() -> Game:
+    """
+    Provides access to the single global Game instance.
+    Creates it if it doesn't exist yet.
+    """
+    global _current_game_instance
+    if _current_game_instance is None:
+        _current_game_instance = Game()
+    return _current_game_instance
+
+# Deprecated global variables - to be removed once all refs are updated
+# game_data = {}
+# rl_agents = {}
 
 # Helper function to get the RLAgent for the current AI player
+# This should now use the Game instance
 def get_rl_agent(player_id):
-    return rl_agents.get(player_id)
+    """Retrieves the RLAgent instance for a given player ID from the current game."""
+    game = get_game_instance()
+    return game.get_agent(player_id)
+
 
 def get_player_role(player_id, dealer_id, maker_id, num_players):
+    """
+    Determines the role of a player in the current round.
+    Note: This function is currently independent of the Game class instance,
+    but operates on data that would typically come from it.
+
+    Args:
+        player_id: The ID of the player.
+        dealer_id: The ID of the dealer.
+        maker_id: The ID of the player who called trump (maker).
+        num_players: The total number of players in the game.
+
+    Returns:
+        str: The player's role (e.g., "dealer", "maker", "opponent", "bidder").
+    """
     if player_id == dealer_id:
         return "dealer"
     if maker_id is None: # Before trump is called
@@ -247,54 +389,48 @@ def get_rl_state(player_id, current_game_data):
     """
     Constructs the state representation for the RL agent.
     player_id: The ID of the AI player for whom the state is being constructed.
-    current_game_data: The global game_data dictionary.
+    current_game_data_dict: The game_data dictionary from the Game instance.
     """
-    hand = current_game_data["hands"].get(player_id, [])
+    # This function now expects current_game_data_dict to be passed,
+    # which is game.game_data from the calling context.
+    hand = current_game_data_dict["hands"].get(player_id, [])
     hand_serialized = sorted([card.to_dict() for card in hand], key=lambda c: (c['suit'], c['rank']))
 
-    up_card_dict = current_game_data.get("up_card")
-    original_up_card_dict = current_game_data.get("original_up_card_for_round")
+    up_card_dict = current_game_data_dict.get("up_card")
+    original_up_card_dict = current_game_data_dict.get("original_up_card_for_round")
 
     state = {
-        "player_id": player_id, # Keep for reference, might not be part of serialized key directly if always from this player's view
-        "game_phase": current_game_data.get("game_phase"),
-        "trump_suit": current_game_data.get("trump_suit"),
-        "dealer": current_game_data.get("dealer"),
-        "maker": current_game_data.get("maker"),
-        "current_player_turn": current_game_data.get("current_player_turn"), # Useful to know if it's this agent's turn
+        "player_id": player_id,
+        "game_phase": current_game_data_dict.get("game_phase"),
+        "trump_suit": current_game_data_dict.get("trump_suit"),
+        "dealer": current_game_data_dict.get("dealer"),
+        "maker": current_game_data_dict.get("maker"),
+        "current_player_turn": current_game_data_dict.get("current_player_turn"),
 
-        "hand": [c['suit'] + c['rank'] for c in hand_serialized], # Simplified representation
-        # "hand_strength_no_trump": evaluate_potential_trump_strength(hand, None, current_game_data), # Replaced by features
+        "hand": [c['suit'] + c['rank'] for c in hand_serialized],
 
         # Bidding specific
-        "up_card_suit": up_card_dict.suit if up_card_dict and current_game_data.get("up_card_visible") else None,
-        "up_card_rank": up_card_dict.rank if up_card_dict and current_game_data.get("up_card_visible") else None,
-        "original_up_card_suit": original_up_card_dict.suit if original_up_card_dict else None, # Suit that was turned down
-        "passes_on_upcard": len(current_game_data.get("passes_on_upcard", [])),
-        "passes_on_calling": len(current_game_data.get("passes_on_calling", [])),
+        "up_card_suit": up_card_dict.suit if up_card_dict and current_game_data_dict.get("up_card_visible") else None,
+        "up_card_rank": up_card_dict.rank if up_card_dict and current_game_data_dict.get("up_card_visible") else None,
+        "original_up_card_suit": original_up_card_dict.suit if original_up_card_dict else None,
+        "passes_on_upcard": len(current_game_data_dict.get("passes_on_upcard", [])),
+        "passes_on_calling": len(current_game_data_dict.get("passes_on_calling", [])),
 
         # Playing specific
-        "current_trick_lead_suit": current_game_data.get("current_trick_lead_suit"),
-        "trick_cards_played_count": len(current_game_data.get("trick_cards", [])),
-        # "cards_in_current_trick": [(tc['player'], tc['card'].to_dict()) for tc in current_game_data.get("trick_cards", [])], # Too complex for now
-        "trick_leader": current_game_data.get("trick_leader"),
+        "current_trick_lead_suit": current_game_data_dict.get("current_trick_lead_suit"),
+        "trick_cards_played_count": len(current_game_data_dict.get("trick_cards", [])),
+        "trick_leader": current_game_data_dict.get("trick_leader"),
 
         # Scores and round progress
-        "my_score": current_game_data["scores"].get(player_id, 0),
-        # "opponent_scores": [], # Needs logic to determine opponents
-        "my_round_tricks": current_game_data["round_tricks_won"].get(player_id, 0),
-        # "maker_round_tricks": current_game_data["round_tricks_won"].get(current_game_data.get("maker"), 0) if current_game_data.get("maker") is not None else 0,
+        "my_score": current_game_data_dict["scores"].get(player_id, 0),
+        "my_round_tricks": current_game_data_dict["round_tricks_won"].get(player_id, 0),
 
-        "player_role": get_player_role(player_id, current_game_data.get("dealer"), current_game_data.get("maker"), current_game_data.get("num_players")),
-        "going_alone": current_game_data.get("going_alone", False)
+        "player_role": get_player_role(player_id, current_game_data_dict.get("dealer"), current_game_data_dict.get("maker"), current_game_data_dict.get("num_players")),
+        "going_alone": current_game_data_dict.get("going_alone", False)
     }
 
-    # Add hand features to the state
-    # The trump_suit for feature calculation should be the actual current trump_suit if set,
-    # or None if bidding (as trump isn't decided yet for the hand itself).
-    # During bidding phases, the agent might consider potential trump suits separately.
-    current_trump_for_features = current_game_data.get("trump_suit")
-    hand_card_objects = current_game_data["hands"].get(player_id, []) # Get actual Card objects
+    current_trump_for_features = current_game_data_dict.get("trump_suit")
+    hand_card_objects = current_game_data_dict["hands"].get(player_id, [])
     calculated_features = get_hand_features(hand_card_objects, current_trump_for_features)
     for feature_name, feature_value in calculated_features.items():
         state[f"feat_{feature_name}"] = feature_value
@@ -307,33 +443,26 @@ def get_rl_state(player_id, current_game_data):
     # The "strength_as_trump_X" are specific to bidding.
 
     if state["game_phase"] == "bidding_round_1" and state["up_card_suit"]:
-        # state[f"strength_as_trump_{state['up_card_suit']}"] = evaluate_potential_trump_strength(hand, state["up_card_suit"], current_game_data)
-        # Instead of just strength, let's add full features for the potential trump suit
+        # Evaluate features and strength if the up-card's suit were trump
         potential_trump_features = get_hand_features(hand_card_objects, state["up_card_suit"])
         for f_name, f_val in potential_trump_features.items():
             state[f"potential_trump_{state['up_card_suit']}_{f_name}"] = f_val
-        # Also keep the overall strength score for this potential trump
-        state[f"eval_strength_as_trump_{state['up_card_suit']}"] = evaluate_potential_trump_strength(hand_card_objects, state["up_card_suit"], current_game_data)
-
+        state[f"eval_strength_as_trump_{state['up_card_suit']}"] = evaluate_potential_trump_strength(hand_card_objects, state["up_card_suit"], current_game_data_dict) # Pass game_data for context if needed by eval
 
     elif state["game_phase"] == "bidding_round_2":
+        # Evaluate features and strength for all other possible trump suits
         for s_option in SUITS:
             if s_option != state["original_up_card_suit"]: # Cannot call the turned down suit
-                 # state[f"strength_as_trump_{s_option}"] = evaluate_potential_trump_strength(hand, s_option, current_game_data)
                 potential_trump_features_r2 = get_hand_features(hand_card_objects, s_option)
                 for f_name, f_val in potential_trump_features_r2.items():
                     state[f"potential_trump_{s_option}_{f_name}"] = f_val
-                state[f"eval_strength_as_trump_{s_option}"] = evaluate_potential_trump_strength(hand_card_objects, s_option, current_game_data)
-
-
-    # Clean state: remove None values for more consistent serialization, or handle them in serialization
-    # For now, json.dumps handles None as null, which is fine.
+                state[f"eval_strength_as_trump_{s_option}"] = evaluate_potential_trump_strength(hand_card_objects, s_option, current_game_data_dict) # Pass game_data for context
 
     # Add played card information to the state
-    played_cards_in_round = current_game_data.get("played_cards_this_round", [])
-    state["played_cards_serialized"] = sorted([f"{c.suit}{c.rank}" for c in played_cards_in_round]) # Store as sorted list of strings
+    played_cards_in_round = current_game_data_dict.get("played_cards_this_round", [])
+    state["played_cards_serialized"] = sorted([f"{c.suit}{c.rank}" for c in played_cards_in_round])
 
-    # Initialize specific flags/counts for played cards
+    # Initialize specific flags/counts for played cards, relative to current trump
     state["played_right_bower"] = False
     state["played_left_bower"] = False
     state["played_ace_trump"] = False
@@ -343,7 +472,7 @@ def get_rl_state(player_id, current_game_data):
     for s_key in SUITS:
         state[f"num_suit_played_{s_key}"] = 0
 
-    current_trump_suit = current_game_data.get("trump_suit")
+    current_trump_suit = current_game_data_dict.get("trump_suit")
     if current_trump_suit: # Only calculate these if trump is set
         left_bower_actual_suit = get_left_bower_suit(current_trump_suit)
         for card in played_cards_in_round:
@@ -367,205 +496,141 @@ def get_rl_state(player_id, current_game_data):
         for card in played_cards_in_round:
             state[f"num_suit_played_{card.suit}"] += 1
 
-
     return state
 
 def initialize_game_data():
-    global game_data, rl_agents
-    logging.info("Initializing game data for the very first time.")
-
-    # Define initial game_data structure first
-    num_players = 3 # Default, can be adjusted if game structure changes
-    player_identities = {
-        0: "Player 0 (You)", # Human player
-        1: "Player 1 (AI)",
-        2: "Player 2 (AI)"
-    }
-
-    # Initialize RL agents based on player_identities
-    # This ensures agents are created once when the application starts or state is wiped.
-    # And their Q-tables are loaded.
-    if not rl_agents: # Only create new agent instances if rl_agents is empty
-        for pid, name in player_identities.items():
-            # Create RLAgent for all players, as all are AI now.
-            if pid not in rl_agents: # Check if agent for this pid already exists
-                logging.info(f"Creating RLAgent for player {pid} ({name})")
-                rl_agents[pid] = RLAgent(player_id=pid)
-
-    # Reset epsilon for agents at the start of each new game (full reset of game_data)
-    # This is important for consistent training sessions.
-    for agent_id, agent in rl_agents.items():
-        agent.epsilon = DEFAULT_EPSILON
-        agent.set_training_mode(True) # Default to training mode
-        # Clear any lingering last_action_info from a previous game
-        if hasattr(agent, 'last_action_info'): # Corrected check
-            del agent.last_action_info
-
-    logging.debug(f"DEBUG: Inside initialize_game_data, before main game_data assignment. Current game_data keys: {list(game_data.keys()) if isinstance(game_data, dict) else 'Not a dict'}")
-    game_data = {
-        "deck": [], "hands": {p: [] for p in range(num_players)}, "dummy_hand": [],
-        "scores": {p: 0 for p in range(num_players)}, "dealer": random.randint(0, num_players - 1),
-        "rl_training_data": {p_id: {} for p_id in rl_agents.keys()},
-        "trump_suit": None, "up_card": None, "up_card_visible": False,
-        "current_player_turn": -1, "maker": None, "going_alone": False,
-        "trick_cards": [], "current_trick_lead_suit": None,
-        "trick_leader": -1, "round_tricks_won": {p: 0 for p in range(num_players)},
-        "game_phase": "setup",
-        "message": "Welcome! Click 'Start New Round'.",
-        "player_identities": player_identities,
-        "num_players": num_players,
-        "passes_on_upcard": [], "passes_on_calling": [],
-        "cards_to_discard_count": 0,
-        "original_up_card_for_round": None,
-        "last_completed_trick": None
-    }
-    logging.debug(f"DEBUG: Inside initialize_game_data, AFTER main game_data assignment. New game_data keys: {list(game_data.keys())}")
+    """
+    This function is now a wrapper around the Game class re-initialization.
+    It ensures that the global game instance is reset to a fresh state.
+    """
+    global _current_game_instance
+    _current_game_instance = Game() # Creates a new Game instance, which auto-initializes
+    logging.info("Global game instance has been re-initialized.")
+    # The old logic for initializing rl_agents and game_data globals is now in Game._initialize_game_and_agents()
 
 
-def get_next_valid_actions(player_id, game_phase, game_data_for_next_state):
+def get_next_valid_actions(player_id, game_phase, game_data_for_next_state_dict):
     """ Helper to determine valid actions for the next state. Essential for Q-learning update. """
-    # Ensure game_data_for_next_state is the complete game_data dictionary
-    hand_cards = game_data_for_next_state.get("hands", {}).get(player_id, [])
+    # game_data_for_next_state_dict is expected to be a game_data dictionary
+    hand_cards = game_data_for_next_state_dict.get("hands", {}).get(player_id, [])
 
     if game_phase == "playing_tricks":
-        lead_suit = game_data_for_next_state.get("current_trick_lead_suit")
-        trump_suit = game_data_for_next_state.get("trump_suit")
-        # Ensure hand_cards are actual Card objects if get_valid_plays expects them
-        # If they are dicts from a serialized state, they need to be Card objects.
-        # However, get_rl_state already uses Card objects from game_data["hands"]
+        lead_suit = game_data_for_next_state_dict.get("current_trick_lead_suit")
+        trump_suit = game_data_for_next_state_dict.get("trump_suit")
         valid_card_objects = get_valid_plays(list(hand_cards), lead_suit, trump_suit)
-        return [card.to_dict() for card in valid_card_objects] # Return dicts as actions
+        return [card.to_dict() for card in valid_card_objects]
     elif game_phase == "bidding_round_1":
         return ["order_up", "pass_bid"]
     elif game_phase == "bidding_round_2":
-        original_up_card = game_data_for_next_state.get("original_up_card_for_round")
+        original_up_card = game_data_for_next_state_dict.get("original_up_card_for_round")
         turned_down_suit = original_up_card.suit if original_up_card else None
         return [f"call_trump:{s}" for s in SUITS if s != turned_down_suit] + ["pass_call"]
     elif game_phase == "dealer_must_call":
-        original_up_card = game_data_for_next_state.get("original_up_card_for_round")
+        original_up_card = game_data_for_next_state_dict.get("original_up_card_for_round")
         turned_down_suit = original_up_card.suit if original_up_card else None
         return [f"call_trump:{s}" for s in SUITS if s != turned_down_suit]
     elif game_phase == "prompt_go_alone":
         return ["choose_go_alone", "choose_not_go_alone"]
     elif game_phase == "dealer_discard_one" or game_phase == "dealer_must_discard_after_order_up":
-        if game_data_for_next_state.get("cards_to_discard_count") == 1 and game_data_for_next_state.get("current_player_turn") == player_id:
-             return [card.to_dict() for card in hand_cards] # Action is to choose one card to discard
+        if game_data_for_next_state_dict.get("cards_to_discard_count") == 1 and game_data_for_next_state_dict.get("current_player_turn") == player_id:
+             return [card.to_dict() for card in hand_cards]
         return []
     elif game_phase == "maker_discard":
-        if game_data_for_next_state.get("cards_to_discard_count") > 1 and game_data_for_next_state.get("current_player_turn") == player_id:
-            # This is complex: action is a combination of 5 cards.
-            # For Q-learning, this might be too large an action space if not simplified.
-            # For now, returning empty, as discard logic for 5 cards is heuristic.
-            return []
+        if game_data_for_next_state_dict.get("cards_to_discard_count") > 1 and game_data_for_next_state_dict.get("current_player_turn") == player_id:
+            return [] # Simplified for now
     return []
 
 
 def process_rl_update(player_id_acted, event_type, event_data=None):
     """
-    Processes RL update for an AI player after an event (e.g., trick end, round end).
-    player_id_acted: The ID of the player whose action is being learned from.
-    event_type: "trick_end", "round_end", "game_end", "bid_processed" (after bid action is fully resolved).
-    event_data: Dictionary containing relevant data for reward calculation.
+    Processes RL update for an AI player after an event.
+    This function now fetches game_data from the Game instance.
     """
-    global game_data
-    agent = get_rl_agent(player_id_acted)
+    game = get_game_instance()
+    current_game_data = game.game_data # Use game_data from the instance
 
-    # Ensure agent exists and is in training mode
+    agent = game.get_agent(player_id_acted) # Get agent from game instance
+
     if not agent or not agent.training_mode:
         return
 
-    training_info = game_data["rl_training_data"].get(player_id_acted)
+    training_info = current_game_data["rl_training_data"].get(player_id_acted)
 
-    # Validate that essential training information is present
     if not training_info or "state" not in training_info or "action" not in training_info:
         return
 
     prev_state_dict = training_info["state"]
-    action_taken_serialized = agent._serialize_action(training_info["action"]) # Ensure action is serialized for Q-table
+    # action_taken_serialized = agent._serialize_action(training_info["action"]) # Action is already serialized if from agent
 
-    if training_info["action"] is None: # Agent failed to choose a valid action
-        game_data["rl_training_data"][player_id_acted] = {} # Clear data
+    if training_info["action"] is None:
+        current_game_data["rl_training_data"][player_id_acted] = {}
         return
 
     reward = 0
-    # --- Calculate Reward based on event_type ---
     if event_type == "trick_end":
         trick_winner_idx = event_data.get("trick_winner_idx")
-        # Simplified: + if player_id_acted won, - if someone else won.
-        # TODO: More nuanced team-based reward for trick_end
-        if trick_winner_idx == player_id_acted:
-            reward += REWARD_WIN_TRICK
-        else:
-            reward += REWARD_LOSE_TRICK
+        if trick_winner_idx == player_id_acted: reward += REWARD_WIN_TRICK
+        else: reward += REWARD_LOSE_TRICK
 
     elif event_type == "round_end":
-        # final_scores_for_round = game_data["round_tricks_won"] # Use current game_data for this
-        round_maker = game_data.get("maker") # Maker of the completed round
+        round_maker = current_game_data.get("maker")
         is_player_maker = (player_id_acted == round_maker)
-
-        if round_maker is None:
-             logging.error(f"RL Update (round_end for P{player_id_acted}): Maker is None. Cannot assign round reward.")
+        if round_maker is None: logging.error(f"RL Update (round_end for P{player_id_acted}): Maker is None.")
         elif is_player_maker:
-            maker_tricks_won = game_data["round_tricks_won"].get(round_maker, 0)
-            was_alone = game_data.get("going_alone", False) # From the completed round state
-            if maker_tricks_won < 3:
-                reward += REWARD_EUCHRED_MAKER
-            elif maker_tricks_won == 5:
-                reward += REWARD_WIN_ROUND_MAKER_ALONE_MARCH if was_alone else REWARD_WIN_ROUND_MAKER_MARCH
-            else: # 3 or 4 tricks
-                reward += REWARD_WIN_ROUND_MAKER_NORMAL
-        else: # Player was a defender against round_maker
-            maker_tricks_won = game_data["round_tricks_won"].get(round_maker, 0)
-            if maker_tricks_won < 3:
-                reward += REWARD_WIN_ROUND_DEFENSE_EUCHRE
-            else:
-                reward += REWARD_LOSE_ROUND_DEFENSE
+            maker_tricks_won = current_game_data["round_tricks_won"].get(round_maker, 0)
+            was_alone = current_game_data.get("going_alone", False)
+            if maker_tricks_won < 3: reward += REWARD_EUCHRED_MAKER
+            elif maker_tricks_won == 5: reward += REWARD_WIN_ROUND_MAKER_ALONE_MARCH if was_alone else REWARD_WIN_ROUND_MAKER_MARCH
+            else: reward += REWARD_WIN_ROUND_MAKER_NORMAL
+        else: # Defender
+            maker_tricks_won = current_game_data["round_tricks_won"].get(round_maker, 0)
+            if maker_tricks_won < 3: reward += REWARD_WIN_ROUND_DEFENSE_EUCHRE
+            else: reward += REWARD_LOSE_ROUND_DEFENSE
 
     elif event_type == "game_end":
         game_winner_idx = event_data.get("game_winner_idx")
-        if game_winner_idx == player_id_acted: # Simplified: direct win/loss
-            reward += REWARD_WIN_GAME
-        else:
-            reward += REWARD_LOSE_GAME
+        if game_winner_idx == player_id_acted: reward += REWARD_WIN_GAME
+        else: reward += REWARD_LOSE_GAME
 
-    elif event_type == "bid_processed": # Intermediate reward for bidding outcome
+    elif event_type == "bid_processed":
         action_type_from_state = training_info.get("action_type")
-        is_bid_action = action_type_from_state in ["ai_bidding_round_1", "ai_bidding_round_2", "ai_dealer_stuck_call"]
+        is_bid_action = action_type_from_state in ["ai_bidding_round_1", "ai_bidding_round_2", "ai_dealer_stuck_call", "decide_go_alone"]
+        if is_bid_action and current_game_data.get("maker") == player_id_acted :
+             pass # Rewards for becoming maker are part of round_end rewards
 
-        if is_bid_action and game_data.get("maker") == player_id_acted : # If the current player became the maker
-             # Positive reward for becoming maker will be implicitly handled by round_end rewards.
-             # Can add a small immediate positive nudge if desired: e.g. reward += REWARD_SUCCESSFUL_BID_ATTEMPT
-             pass # Covered by round_end
-        # No immediate penalty for passing a bid unless it leads to a bad round outcome.
-
-    # --- Determine next_state and next_valid_actions ---
-    # The 'current' game_data is the next_state from the perspective of the action just taken.
-    next_state_dict = get_rl_state(player_id_acted, game_data)
-
-    next_player_for_q_learning = game_data.get("current_player_turn", -1)
+    next_state_dict = get_rl_state(player_id_acted, current_game_data) # Pass current_game_data
+    next_player_for_q_learning = current_game_data.get("current_player_turn", -1)
     next_valid_actions_for_q = []
-    if game_data.get("game_phase") not in ["game_over", "round_over", "setup"]:
-        if next_player_for_q_learning != 0 and next_player_for_q_learning != -1 : # If next player is an AI
-             # Get valid actions for the *next* player in the *new* state.
-            next_valid_actions_for_q = get_next_valid_actions(next_player_for_q_learning, game_data["game_phase"], game_data)
-        # If next player is human (0) or game is in a non-AI state, next_valid_actions_for_q remains empty, next_max_q = 0.
+    if current_game_data.get("game_phase") not in ["game_over", "round_over", "setup"]:
+        # In simulation, all players are AI. If P0 is AI, this needs to be != -1.
+        # Assuming P0 is human for Flask, AI players are > 0.
+        # For simulation, this check might need adjustment or all players get agents.
+        # Current: if next player is any valid player index (non -1) AND not human (0 in mixed mode)
+        if next_player_for_q_learning != -1: # Simplified: get actions if there's a next player.
+                                         # Further filtering if P0 is always human can be added.
+            # If all players are AI (as in training), then P0 is also an AI.
+            # If P0 is human, then next_player_for_q_learning != 0 might be needed.
+            # For now, assume all players can have next_valid_actions if they are AI.
+            # The RLAgent is only created for AI players, so this is implicitly handled.
+            if game.get_agent(next_player_for_q_learning): # Check if next player is an RL agent
+                 next_valid_actions_for_q = get_next_valid_actions(next_player_for_q_learning, current_game_data["game_phase"], current_game_data)
 
     logging.debug(f"RL Update P{player_id_acted}: Event: {event_type}, Action: {training_info['action']}, Reward: {reward}")
     agent.update_q_table(prev_state_dict, training_info["action"], reward, next_state_dict, next_valid_actions_for_q)
 
-    game_data["rl_training_data"][player_id_acted] = {} # Clear the processed training data
-    # Erroneous game_data re-assignment and initialize_game_data() call removed from here.
+    current_game_data["rl_training_data"][player_id_acted] = {}
 
-# initialize_game_data() # This is the global scope call at the end of the original file structure.
-                         # It should be commented out if training is run directly from __main__
-                         # to avoid double initialization or state conflicts if not careful.
-                         # For now, let's assume it's intended to be active for Flask, and the
-                         # training loop's own initialize_game_data calls are sufficient for training.
 
 # --- Core Game Logic ---
 def initialize_new_round():
-    global game_data
-    logging.info(f"Initializing new round. Current dealer: {game_data.get('dealer', 'N/A')}")
+    """
+    Sets up the game state for the beginning of a new round.
+    Uses the current Game instance.
+    """
+    game = get_game_instance()
+    current_game_data = game.game_data # Work with the game_data from the instance
+
+    logging.info(f"Initializing new round. Current dealer: {current_game_data.get('dealer', 'N/A')}")
     game_data["deck"] = create_deck()
     random.shuffle(game_data["deck"])
     player_hands = {i: [] for i in range(game_data["num_players"])}
@@ -609,7 +674,18 @@ def get_left_bower_suit(trump_suit_char):
     if trump_suit_char not in SUITS_MAP: return None
     return {'H': 'D', 'D': 'H', 'C': 'S', 'S': 'C'}.get(trump_suit_char)
 
-def get_effective_suit(card, trump_suit):
+def get_effective_suit(card: Card, trump_suit: str | None) -> str:
+    """
+    Determines the effective suit of a card, considering the trump suit.
+    The Left Bower's suit changes to the trump suit.
+
+    Args:
+        card: The Card object.
+        trump_suit: The current trump suit character (e.g., 'H') or None.
+
+    Returns:
+        The effective suit character of the card.
+    """
     if not trump_suit: return card.suit
     left_bower_actual_suit = get_left_bower_suit(trump_suit)
     if card.rank == 'J' and card.suit == left_bower_actual_suit:
@@ -633,8 +709,18 @@ def get_card_value(card, trump_suit, lead_suit_for_trick=None):
 def get_hand_features(hand: list[Card], trump_suit: str | None) -> dict:
     """
     Analyzes a player's hand and returns a dictionary of "Card Sense" features.
-    hand: A list of Card objects.
-    trump_suit: The current trump suit (e.g., 'H', 'D', 'C', 'S') or None if not yet determined.
+    These features are used to represent the hand's characteristics for the RL agent.
+
+    Args:
+        hand: A list of Card objects representing the player's hand.
+        trump_suit: The current trump suit (e.g., 'H', 'D', 'C', 'S') or None
+                    if trump has not yet been determined (e.g., during bidding).
+
+    Returns:
+        A dictionary where keys are feature names (str) and values are
+        feature values (int, bool). Features include counts of trump cards,
+        presence of specific high trump cards (bowers, Ace), information about
+        off-suit Aces, suit voids, and lengths of suits.
     """
     features = {
         "num_trump_cards": 0,
@@ -776,14 +862,38 @@ def evaluate_potential_trump_strength(hand, potential_trump_suit, game_data=None
         if len(suits_in_hand) == 1 and potential_trump_suit in suits_in_hand: strength_score += 10
     return strength_score
 
-def get_ai_cards_to_discard(hand, num_to_discard, trump_suit):
+def get_ai_cards_to_discard(hand: list[Card], num_to_discard: int, trump_suit: str | None) -> list[Card]:
+    """
+    Heuristic for an AI player to select cards to discard.
+    Sorts cards by their value (lowest first, considering trump) and discards the worst ones.
+
+    Args:
+        hand: The AI player's current hand (list of Card objects).
+        num_to_discard: The number of cards the AI needs to discard.
+        trump_suit: The current trump suit, or None if not yet determined.
+
+    Returns:
+        A list of Card objects to be discarded.
+    """
     hand_copy = list(hand)
     hand_copy.sort(key=lambda c: get_card_value(c, trump_suit, None))
     return hand_copy[:num_to_discard]
 
-def get_ai_stuck_suit_call(hand, turned_down_suit):
+def get_ai_stuck_suit_call(hand: list[Card], turned_down_suit: str) -> str:
+    """
+    Heuristic for an AI dealer who is "stuck" (must call trump).
+    Evaluates hand strength for each possible suit (excluding the turned-down suit)
+    and calls the suit that yields the highest strength.
+
+    Args:
+        hand: The AI dealer's hand.
+        turned_down_suit: The suit that was originally turned up and then passed on.
+
+    Returns:
+        The character representation of the suit the AI decides to call as trump.
+    """
     possible_suits = [s for s in SUITS if s != turned_down_suit]
-    if not possible_suits: return random.choice(SUITS)
+    if not possible_suits: return random.choice(SUITS) # Should not happen in standard Euchre
     best_suit, max_strength = "", -1
     for s_key in possible_suits:
         strength = sum(get_card_value(c, s_key) for c in hand)
@@ -799,17 +909,36 @@ def transition_to_play_phase():
     if game_data["game_phase"] == "playing_tricks" and game_data["current_player_turn"] != 0:
         process_ai_play_card(game_data["current_player_turn"])
 
-def process_ai_play_card(ai_player_idx):
+def process_ai_play_card(ai_player_idx: int):
+    """
+    Manages an AI player's turn to play a card.
+    It first checks if an RLAgent exists for the player.
+    If yes:
+        - Constructs the current game state for the RL agent.
+        - Asks the agent to choose a card (action).
+        - Applies a heuristic overlay for sloughing (discarding a low-value card
+          when unable to follow suit and not wanting to trump or win).
+    If no RLAgent (or in fallback mode):
+        - Uses a basic heuristic to play a card (e.g., follow suit with highest,
+          trump if can win, slough lowest otherwise).
+
+    After determining the card to play, this function updates the game state:
+    removes the card from AI's hand, adds it to the trick, checks if the trick
+    is complete, determines trick winner, updates scores/tricks won, and transitions
+    the turn or game phase accordingly. It also triggers RL updates for agents
+    involved in the completed trick.
+
+    Args:
+        ai_player_idx: The index of the AI player whose turn it is.
+    """
     global game_data #; time.sleep(0.5) # Removed AI delay
     if game_data["game_phase"] != "playing_tricks" or game_data["current_player_turn"] != ai_player_idx: return
 
     current_agent = get_rl_agent(ai_player_idx)
     if not current_agent:
-        logging.error(f"RL Agent for P{ai_player_idx} not found in process_ai_play_card. Falling back to old logic.")
-        # Fallback to a simplified version of old logic or random play if agent is missing
-        # This part of fallback needs to be robust or simply log error and skip turn.
-        # For now, let's use the existing heuristic if agent is missing.
-        # --- Start of Fallback Heuristic ---
+        logging.error(f"RL Agent for P{ai_player_idx} not found in process_ai_play_card. Falling back to heuristic logic.")
+        # --- Start of Fallback Heuristic for missing RL Agent ---
+        # This heuristic attempts to make a reasonable play based on common Euchre strategies.
         ai_hand_fallback = game_data["hands"][ai_player_idx]
         lead_suit_fallback = game_data["current_trick_lead_suit"]
         trump_suit_fallback = game_data["trump_suit"]
@@ -929,14 +1058,15 @@ def process_ai_play_card(ai_player_idx):
                 logging.error(f"RL Agent P{ai_player_idx} chose card {chosen_action_dict} not found in hand {[str(c) for c in ai_hand]}. Playing first valid.")
                 card_to_play = valid_card_objects[0] # Fallback
 
-        # Update rl_training_data with the actual card object if chosen_action_dict was valid, for easier processing later.
-        # The agent's Q-table uses the serialized dict form, so that's what should have been stored for "action".
-        # However, for consistency in how we might process rewards related to the card, let's ensure it's the dict.
-        # The chosen_action_dict is already stored. If card_to_play had to fallback, the stored action might not match.
-        # This is acceptable for now; the agent learns based on what it *thought* it was choosing from valid_actions_for_agent.
+        # Note: The chosen_action_dict (serialized form) is stored for learning.
+        # card_to_play is the actual Card object for execution.
 
         # --- Heuristic Overlay for RL Agent Sloughing ---
-        # Check if the RL agent is in a situation where it should be sloughing its worst card.
+        # Purpose: To guide the RL agent towards more "standard" sloughing behavior
+        # (discarding the lowest-value, non-winning, off-suit card) if it chooses to slough.
+        # This helps prevent the agent from learning to discard valuable cards unnecessarily
+        # when it's not following suit and not trying to win the trick.
+        # It does not override decisions to follow suit or to win with trump.
         can_follow_lead_suit_rl = False
         if lead_suit: # lead_suit is current_trick_lead_suit
             can_follow_lead_suit_rl = any(get_effective_suit(c, trump_suit) == lead_suit for c in ai_hand)
@@ -1132,10 +1262,31 @@ def determine_trick_winner(trick_cards_played, trump_suit, lead_suit_of_trick=No
     winner_info = determine_trick_winner_so_far(trick_cards_played, trump_suit, lead_suit_of_trick)
     return winner_info['player'] if winner_info else -1
 
-def predict_maker_can_beat_card(maker_idx, target_card_to_beat, trump_suit, current_lead_suit, game_data_copy):
+def predict_maker_can_beat_card(maker_idx: int, target_card_to_beat: Card,
+                                trump_suit: str, current_lead_suit: str | None,
+                                game_data_copy: dict) -> bool:
     """
-    Predicts if the maker is likely to beat a specific target_card.
-    This is a heuristic based on cards played and general probabilities.
+    Heuristically predicts if the maker is likely to beat a specific target card.
+    This function is used by AI opponents to gauge if playing a high card might be
+    over-trumped by the maker. It does NOT know the maker's actual hand.
+    Prediction is based on:
+    - Cards already played in the round.
+    - General probabilities of remaining cards.
+    - Maker's remaining hand size.
+
+    Args:
+        maker_idx: Player ID of the maker.
+        target_card_to_beat: The card the opponent is considering playing, which they
+                             hope the maker cannot beat.
+        trump_suit: The current trump suit.
+        current_lead_suit: The lead suit of the current trick (if any).
+        game_data_copy: A copy of the current game state.
+
+    Returns:
+        True if the heuristic predicts the maker *might* beat the target card,
+        False otherwise.
+    """
+    # This is a heuristic based on cards played and general probabilities.
     It does not know the maker's actual hand.
     """
     maker_hand_size = len(game_data_copy["hands"][maker_idx])
@@ -1228,16 +1379,32 @@ def old_determine_trick_winner(trick_cards_played, trump_suit): # Keep old for r
                     if card_value > highest_value_card_value: highest_value_card = card; winning_player = player
     return winning_player
 
-def is_round_over(): return sum(game_data["round_tricks_won"].values()) >= 5
+def is_round_over():
+    """Checks if the current round has concluded (i.e., 5 tricks have been played)."""
+    return sum(game_data["round_tricks_won"].values()) >= 5
 
 def score_round():
+    """
+    Calculates and assigns points at the end of a round.
+    Updates player scores based on whether the maker made their bid, got euchred,
+    or achieved a march (all 5 tricks) or alone march.
+    Also updates the game phase to "round_over" or "game_over" if applicable.
+    Triggers RL updates for "round_end" or "game_end" events.
+    """
     global game_data
     # Prevent re-scoring if round/game is already marked as over
     if game_data.get("game_phase") in ["round_over", "game_over"]:
         logging.warning(f"score_round() called when game_phase is already {game_data.get('game_phase')}. Points not re-awarded.")
         return
 
-    maker = game_data["maker"]; maker_tricks = game_data["round_tricks_won"][maker]
+    maker = game_data["maker"]
+    if maker is None: # Should not happen if round is properly conducted
+        logging.error("CRITICAL: score_round() called but maker is None. Aborting scoring for this round.")
+        game_data["message"] = "Error: Round scoring aborted due to missing maker."
+        game_data["game_phase"] = "round_over" # Mark round as over to allow progression
+        return
+
+    maker_tricks = game_data["round_tricks_won"][maker]
     points_awarded = 0; message_suffix = ""; is_going_alone = game_data.get("going_alone", False)
     if maker_tricks < 3:
         points_awarded = 2
@@ -1298,6 +1465,14 @@ def scripts_route(): return send_from_directory('.', 'script.js')
 
 @app.route('/api/start_game', methods=['GET'])
 def start_game_api():
+    """
+    API endpoint to start a new game or a new round within an existing game.
+    If the game is over or in setup, it initializes global game data.
+    It then sets the dealer for the new round and initializes the round data
+    (dealing cards, setting up-card, etc.).
+    If the first player to bid is an AI, it triggers the AI's bidding process.
+    Returns the full game state as JSON.
+    """
     global game_data
     # Use .get() for safer access to game_phase. If key is missing, treat as "setup".
     current_phase = game_data.get("game_phase")
@@ -1315,6 +1490,19 @@ def start_game_api():
 
 @app.route('/api/submit_action', methods=['POST'])
 def submit_action_api():
+    """
+    API endpoint for the human player (Player 0) to submit an action.
+    Handles various actions based on the current game phase, such as:
+    - Bidding: 'order_up', 'pass_bid', 'call_trump', 'pass_call'
+    - Discarding: 'dealer_discard_one', 'maker_discard', 'dealer_must_discard_after_order_up'
+    - Going Alone: 'choose_go_alone', 'choose_not_go_alone'
+    - Playing Cards: 'play_card'
+
+    It validates the action against the current game state and player turn.
+    Updates the game state based on the action and then may trigger AI actions
+    if it becomes an AI's turn.
+    Returns the updated game state as JSON.
+    """
     global game_data
     action_data = request.json
     player_idx = action_data.get('player_index')
@@ -1682,7 +1870,21 @@ def ai_discard_five_cards(ai_maker_idx):
     if len(ai_hand) != 5: logging.warning(f"AI P{ai_maker_idx} hand size {len(ai_hand)} after discard, expected 5.")
     transition_to_play_phase()
 
-def ai_decide_go_alone_and_proceed(ai_maker_idx):
+def ai_decide_go_alone_and_proceed(ai_maker_idx: int):
+    """
+    Handles an AI maker's decision to go alone or play with the dummy hand.
+    - Validates if it's the correct player's turn and game phase.
+    - If an RLAgent exists, it queries the agent for a "choose_go_alone" or
+      "choose_not_go_alone" action based on the current game state.
+    - If no RLAgent, uses a heuristic based on hand strength and trump count.
+    - Updates game state (`going_alone`, `message`).
+    - Triggers an RL update for the decision.
+    - If not going alone and dummy hand is valid, calls `ai_discard_five_cards`.
+    - Otherwise, transitions to the play phase.
+
+    Args:
+        ai_maker_idx: The player ID of the AI maker.
+    """
     global game_data #; time.sleep(0.5) # Removed AI delay
     # Ensure it's actually this AI's turn and correct phase
     if game_data["current_player_turn"] != ai_maker_idx or game_data["game_phase"] != "prompt_go_alone" or game_data["maker"] != ai_maker_idx:
@@ -1694,9 +1896,9 @@ def ai_decide_go_alone_and_proceed(ai_maker_idx):
 
     if not current_agent:
         logging.error(f"RL Agent for P{ai_maker_idx} not found in ai_decide_go_alone_and_proceed. Using heuristic.")
-        # Fallback to heuristic
+        # Fallback to heuristic for going alone decision
         ai_hand_fallback = game_data["hands"][ai_maker_idx]; trump_suit_fallback = game_data["trump_suit"]
-        GO_ALONE_THRESHOLD = 220 # Heuristic threshold
+        GO_ALONE_THRESHOLD = 220 # Heuristic threshold for hand strength to consider going alone
         current_hand_strength = evaluate_potential_trump_strength(ai_hand_fallback, trump_suit_fallback, game_data)
         num_trump_cards_in_hand = sum(1 for card in ai_hand_fallback if get_effective_suit(card, trump_suit_fallback) == trump_suit_fallback)
         has_both_bowers = any(c.rank == 'J' and c.suit == trump_suit_fallback for c in ai_hand_fallback) and \
@@ -1705,7 +1907,7 @@ def ai_decide_go_alone_and_proceed(ai_maker_idx):
             if num_trump_cards_in_hand >= 3 or (num_trump_cards_in_hand >=2 and has_both_bowers) : chose_to_go_alone = True
         logging.info(f"AI P{ai_maker_idx} (Maker Heuristic) decided to {'go alone' if chose_to_go_alone else 'play with dummy'}. Strength: {current_hand_strength}, Trumps: {num_trump_cards_in_hand}.")
     else:
-        # RL Agent logic
+        # RL Agent logic for going alone decision
         state_dict = get_rl_state(ai_maker_idx, game_data)
         game_data["rl_training_data"][ai_maker_idx] = {"state": state_dict, "action": None, "action_type": "decide_go_alone"}
 
@@ -1720,8 +1922,6 @@ def ai_decide_go_alone_and_proceed(ai_maker_idx):
     game_data["message"] = f"{game_data['player_identities'][ai_maker_idx]} (AI Maker) chose to {'go alone' if chose_to_go_alone else 'play with dummy hand'}."
 
     # RL Update for the go_alone decision.
-    # The reward for this is mostly tied to round outcome, but we link S,A -> S' here.
-    # chosen_rl_action was stored in game_data["rl_training_data"][ai_maker_idx]["action"]
     if current_agent: # Ensure agent exists before trying to update
         process_rl_update(ai_maker_idx, "bid_processed", event_data={"action_taken": game_data["rl_training_data"][ai_maker_idx]["action"], "is_go_alone_decision": True})
 
@@ -1734,7 +1934,6 @@ def ai_decide_go_alone_and_proceed(ai_maker_idx):
             ai_hand.extend(game_data["dummy_hand"]); game_data["dummy_hand"] = []
             logging.info(f"AI P{ai_maker_idx} picked up dummy. Hand size: {len(ai_hand)}.")
             game_data["cards_to_discard_count"] = 5
-            # ai_discard_five_cards still uses a heuristic. RL for this is a future step.
             ai_discard_five_cards(ai_maker_idx) # This will discard and then call transition_to_play_phase
         else:
             logging.error(f"AI P{ai_maker_idx} chose not to go alone, but dummy_hand invalid or missing. Dummy: {game_data.get('dummy_hand')}. Forcing 'go alone'.")
@@ -1743,7 +1942,23 @@ def ai_decide_go_alone_and_proceed(ai_maker_idx):
             transition_to_play_phase()
 
 
-def process_ai_bid_action(ai_action_data):
+def process_ai_bid_action(ai_action_data: dict):
+    """
+    Handles an AI player's bidding decision during bidding rounds or when stuck as dealer.
+    - Retrieves the RLAgent for the player.
+    - Constructs the game state for the agent.
+    - Queries the agent for a bidding action ('order_up', 'pass_bid', 'call_trump:S', 'pass_call').
+    - Updates the game state based on the agent's decision (e.g., sets trump, maker,
+      advances bidding turn, or transitions to dealer discard/go_alone phase).
+    - Triggers RL updates for the bidding action.
+    - If the AI's action leads to another AI's turn (e.g., AI passes, next AI bids),
+      this function is called recursively for the next AI.
+    - If dealer (AI or human) picks up the up-card, handles their discard.
+
+    Args:
+        ai_action_data: A dictionary containing 'player_index' and 'action' type
+                        (e.g., 'ai_bidding_round_1', 'ai_dealer_stuck_call').
+    """
     global game_data #; time.sleep(0.5) # Removed AI delay
     player_idx = ai_action_data.get('player_index')
     action_type = ai_action_data.get('action') # e.g., 'ai_bidding_round_1', 'ai_bidding_round_2', 'ai_dealer_stuck_call'
@@ -1980,12 +2195,25 @@ def ai_play_turn_api():
     # The response will be based on the state of global game_data AFTER any processing.
     return jsonify(game_data_to_json(game_data))
 
-def game_data_to_json(current_game_data_arg): # Renamed arg for clarity
-    global game_data # Access the true global game_data
-    # Ensure that the data being serialized is from the single global source,
-    # especially critical if current_game_data_arg could somehow be a stale copy.
-    json_safe_data = game_data.copy()
+def game_data_to_json(current_game_data_arg: dict) -> dict:
+    """
+    Converts the game_data dictionary into a JSON-serializable format.
+    Specifically, it converts Card objects within lists or dictionaries
+    (like hands, deck, up_card) into their dictionary representations.
 
+    Args:
+        current_game_data_arg: The game data dictionary to be converted.
+                               Although the global `game_data` is primarily used,
+                               this argument allows flexibility if a copy is passed.
+
+    Returns:
+        A new dictionary where Card objects are replaced by their dict versions.
+    """
+    global game_data # Access the true global game_data for the most current state
+    # Create a shallow copy to modify for JSON serialization without altering the original Card objects in game_data.
+    json_safe_data = game_data.copy() # Ensures we are working with the global state
+
+    # Convert Card objects in various parts of the game state to their dict representations
     if json_safe_data.get('deck'): json_safe_data['deck'] = [card.to_dict() for card in json_safe_data['deck']]
     if json_safe_data.get('hands'): json_safe_data['hands'] = { p_idx: [card.to_dict() for card in hand] for p_idx, hand in json_safe_data['hands'].items()}
     if json_safe_data.get('dummy_hand'): json_safe_data['dummy_hand'] = [card.to_dict() for card in json_safe_data['dummy_hand']]
@@ -2002,161 +2230,127 @@ if __name__ == "__main__":
     # app.run(debug=True, host='0.0.0.0') # Comment out Flask app for training
 
     # --- Training Simulation ---
-    def run_training_simulation(num_games_to_simulate, save_interval=10):
+    def run_training_simulation(num_games_to_simulate: int, save_interval: int = 10):
+        """
+        Runs a simulation of multiple Euchre games for training RL agents.
+        All players in the simulation are AI agents. The game progresses automatically
+        through bidding, playing tricks, and scoring, with AI agents making decisions
+        and updating their Q-tables based on outcomes.
+
+        Args:
+            num_games_to_simulate: The total number of games to simulate.
+            save_interval: (No longer used with SQLite) Interval for saving Q-tables.
+        """
         logging.info(f"Starting RL training simulation for {num_games_to_simulate} games.")
         # Ensure agents are created if not already (e.g. if initialize_game_data hasn't run via Flask)
         if not rl_agents:
-            initialize_game_data() # This will create agents
-            # initialize_game_data sets them to training mode and resets epsilon.
+            initialize_game_data() # This will create agents and set them to training mode.
 
         for game_num in range(1, num_games_to_simulate + 1):
             logging.info(f"--- Starting Training Game {game_num} ---")
-            # Initialize game data (resets scores, rl_training_data, agent epsilons etc.)
-            initialize_game_data()
-            # logging.info(f"DEBUG: game_data keys after initialize_game_data in training loop: {list(game_data.keys())}") # Removed Debug print
-            game_data["dealer"] = random.randint(0, game_data["num_players"] - 1)
+            initialize_game_data() # Resets scores, RL agent data (epsilon), dealer, etc. for a new game.
+            game_data["dealer"] = random.randint(0, game_data["num_players"] - 1) # Random dealer for new game
 
             game_over_flag = False
             round_num = 0
             while not game_over_flag:
                 round_num += 1
                 logging.info(f"Game {game_num}, Round {round_num} starting...")
-                # Initialize new round (deals cards, sets up bidding)
-                if game_data["game_phase"] != "setup": # if not first round of game
+
+                # Determine dealer for the new round
+                if game_data["game_phase"] != "setup": # If not the very first round of the game
                     game_data["dealer"] = (game_data["dealer"] + 1) % game_data["num_players"]
-                initialize_new_round()
+
+                initialize_new_round() # Deals cards, sets up bidding phase, etc.
 
                 round_over_flag = False
                 while not round_over_flag:
                     current_player_id = game_data["current_player_turn"]
-                    current_phase = game_data["game_phase"] # Get current phase at start of iteration
+                    current_phase = game_data["game_phase"]
 
-                    # Check for terminal conditions *before* processing turn
+                    # Check for terminal conditions (game over, round over) before processing turn
                     if current_phase == "game_over":
-                        game_over_flag = True
-                        break
-                    if current_phase == "round_over": # Indicates round ended, new one should start or game ends
-                        round_over_flag = True
-                        break
+                        game_over_flag = True; break
+                    if current_phase == "round_over":
+                        round_over_flag = True; break
 
                     logging.debug(f"Game {game_num}, R{round_num}, Phase: {current_phase}, Turn: P{current_player_id}")
 
-                    # All players are now AI and will be handled by the same logic block.
+                    # AI logic for different game phases
+                    # Since all players are AI in simulation, no human input is awaited.
                     if current_phase == "bidding_round_1":
                         process_ai_bid_action({'player_index': current_player_id, 'action': 'ai_bidding_round_1'})
                     elif current_phase == "bidding_round_2":
                         process_ai_bid_action({'player_index': current_player_id, 'action': 'ai_bidding_round_2'})
                     elif current_phase == "dealer_must_call":
-                            process_ai_bid_action({'player_index': current_player_id, 'action': 'ai_dealer_stuck_call'})
+                        process_ai_bid_action({'player_index': current_player_id, 'action': 'ai_dealer_stuck_call'})
                     elif current_phase == "prompt_go_alone":
-                        ai_decide_go_alone_and_proceed(current_player_id)
+                        ai_decide_go_alone_and_proceed(current_player_id) # AI Maker decides
                     elif current_phase == "playing_tricks":
                         process_ai_play_card(current_player_id)
-                    elif current_phase == "maker_discard": # AI Maker discarding 5 cards
-                        # This is handled by ai_decide_go_alone_and_proceed if not going alone.
-                        # If somehow AI is in this phase directly, call discard logic.
+                    elif current_phase == "maker_discard":
+                        # This phase is entered if AI maker chooses not to go alone and picks up dummy.
+                        # ai_decide_go_alone_and_proceed calls ai_discard_five_cards internally.
+                        # This direct call might be redundant if the flow is always through ai_decide_go_alone.
                         if game_data["maker"] == current_player_id and game_data["cards_to_discard_count"] == 5:
                             ai_discard_five_cards(current_player_id)
-                    elif current_phase in ["dealer_discard_one", "dealer_must_discard_after_order_up"]: # AI Dealer discarding 1
-                        # This is the fix for the infinite loop.
-                        # All players are AI in the simulation. If P0 is dealer, this applies.
-                        if current_player_id == game_data["dealer"]: # Redundant check as phase implies dealer's turn, but good for safety
+                    elif current_phase in ["dealer_discard_one", "dealer_must_discard_after_order_up"]:
+                        # Handles AI dealer discarding one card after up-card is ordered up.
+                        if current_player_id == game_data["dealer"]:
                             logging.info(f"AI Dealer P{current_player_id} in phase {current_phase}. Needs to discard.")
                             dealer_hand = game_data["hands"][current_player_id]
                             trump_suit = game_data["trump_suit"]
 
-                            if not dealer_hand:
-                                logging.error(f"CRITICAL: AI Dealer P{current_player_id} has empty hand in {current_phase}.")
-                                # Attempt to recover or break, for now, log and let it error out if it causes issues.
-                            elif not trump_suit:
-                                logging.error(f"CRITICAL: Trump suit not set for AI Dealer P{current_player_id} discard in {current_phase}.")
-                                # This is a critical state error.
+                            if not dealer_hand: logging.error(f"CRITICAL: AI Dealer P{current_player_id} has empty hand in {current_phase}.")
+                            elif not trump_suit: logging.error(f"CRITICAL: Trump suit not set for AI Dealer P{current_player_id} discard in {current_phase}.")
                             else:
                                 cards_to_discard = get_ai_cards_to_discard(list(dealer_hand), 1, trump_suit)
                                 if cards_to_discard:
                                     card_to_discard_obj = cards_to_discard[0]
                                     try:
-                                        # Find the actual card object in hand to remove
                                         actual_card_to_remove = next(c for c in dealer_hand if c.suit == card_to_discard_obj.suit and c.rank == card_to_discard_obj.rank)
                                         dealer_hand.remove(actual_card_to_remove)
                                         game_data["message"] = f"{game_data['player_identities'][current_player_id]} (AI Dealer) discarded {str(actual_card_to_remove)}."
                                         logging.info(f"AI Dealer P{current_player_id} discarded {str(actual_card_to_remove)}. Hand size: {len(dealer_hand)}.")
                                     except (ValueError, StopIteration):
                                         logging.error(f"AI Dealer P{current_player_id} failed to find/remove card {str(card_to_discard_obj)} from hand for discard. Hand: {[str(c) for c in dealer_hand]}")
-                                        # Fallback: remove first card if specific one not found
-                                        if dealer_hand:
+                                        if dealer_hand: # Fallback
                                             fallback_discard = dealer_hand.pop(0)
-                                            logging.warning(f"AI Dealer P{current_player_id} discarded {str(fallback_discard)} by fallback due to removal error.")
+                                            logging.warning(f"AI Dealer P{current_player_id} discarded {str(fallback_discard)} by fallback.")
                                             game_data["message"] = f"{game_data['player_identities'][current_player_id]} (AI Dealer) discarded {str(fallback_discard)} (fallback)."
-
 
                                     game_data["game_phase"] = "prompt_go_alone"
                                     game_data["current_player_turn"] = game_data["maker"]
-                                    game_data["cards_to_discard_count"] = 0 # Reset discard count
+                                    game_data["cards_to_discard_count"] = 0
                                     logging.info(f"AI Dealer P{current_player_id} discard complete. Phase -> 'prompt_go_alone'. Turn for P{game_data['maker']} (Maker).")
-
-                                    # If the maker (who is next) is also an AI, their logic needs to be triggered for 'prompt_go_alone'.
-                                    # The main loop will pick this up in the next iteration.
-                                    # If maker is AI, ai_decide_go_alone_and_proceed will be called.
-                                    if game_data["maker"] != 0 : # Assuming P0 is human if ID is 0. In pure AI sim, all are AI.
-                                        # The next loop iteration will handle ai_decide_go_alone_and_proceed.
-                                        pass
                                 else:
-                                    logging.error(f"AI Dealer P{current_player_id} (hand: {[str(c) for c in dealer_hand]}) failed to select card to discard in {current_phase}. Trump: {trump_suit}. Hand size: {len(dealer_hand)}")
-                                    # This could still lead to a loop if not handled, but less likely than 'pass'.
-                                    # Forcing a discard of the first card if selection fails.
-                                    if dealer_hand:
+                                    logging.error(f"AI Dealer P{current_player_id} failed to select card to discard in {current_phase}.")
+                                    if dealer_hand: # Fallback to prevent stall
                                         fallback_discard = dealer_hand.pop(0)
-                                        logging.warning(f"AI Dealer P{current_player_id} discarded {str(fallback_discard)} by fallback due to selection error.")
-                                        game_data["message"] = f"{game_data['player_identities'][current_player_id]} (AI Dealer) discarded {str(fallback_discard)} (fallback)."
-                                        game_data["game_phase"] = "prompt_go_alone"
-                                        game_data["current_player_turn"] = game_data["maker"]
-                                        game_data["cards_to_discard_count"] = 0
-                                        logging.info(f"AI Dealer P{current_player_id} fallback discard complete. Phase -> 'prompt_go_alone'. Turn for P{game_data['maker']} (Maker).")
-
+                                        logging.warning(f"AI Dealer P{current_player_id} discarded {str(fallback_discard)} by fallback (selection error).")
+                                        game_data["game_phase"] = "prompt_go_alone"; game_data["current_player_turn"] = game_data["maker"]; game_data["cards_to_discard_count"] = 0
                         else:
-                            # This case should ideally not be hit if current_player_id is always the dealer in these phases.
                             logging.warning(f"Phase is {current_phase} but current player P{current_player_id} is not dealer P{game_data['dealer']}. Skipping discard logic.")
-                            # To prevent potential loops if this state is erroneous, advance turn or phase carefully.
-                            # For now, this will rely on outer loop checks or subsequent logic to resolve.
-                            pass # Let the loop continue, hoping for resolution or timeout.
                     else:
-                        logging.error(f"Training Loop: AI P{current_player_id} in UNHANDLED phase {current_phase} for game {game_num}. Aborting this game.")
-                        game_data["message"] = f"AI P{current_player_id} entered unhandled phase {current_phase}. Game {game_num} aborted."
-                        # Force the current game to end and allow the simulation to proceed to the next game.
-                        game_over_flag = True
-                        round_over_flag = True # Ensure exit from inner while loop as well
+                        logging.error(f"Training Loop: AI P{current_player_id} in UNHANDLED phase {current_phase} for game {game_num}. Aborting game.")
+                        game_over_flag = True; round_over_flag = True # Force exit
 
-                    # Check for state consistency or errors that might stall the game
-                    if game_data["game_phase"] == current_phase and game_data["current_player_turn"] == current_player_id and not game_over_flag and not round_over_flag :
-                        # If no state change after a player's processing, it might be a loop.
-                        # This is a basic check. More sophisticated checks might be needed.
-                        # For AI turns, the functions should change current_player_turn or game_phase.
-                        # For P0 simulation, it also needs to ensure state progression.
-                        # logging.warning(f"Potential stall in training loop: P{current_player_id}, Phase: {current_phase}. Check logic.")
-                        # Break if stuck, or implement a timeout for the loop iteration
-                        pass # Allow one pass, if it happens again, then it's a problem.
+                    # Basic stall check: if phase and player haven't changed, log warning.
+                    # More robust stall detection might be needed for complex scenarios.
+                    if game_data["game_phase"] == current_phase and \
+                       game_data["current_player_turn"] == current_player_id and \
+                       not game_over_flag and not round_over_flag:
+                        logging.warning(f"Potential stall in training: P{current_player_id}, Phase: {current_phase}. Game state may not have progressed.")
+                        # Consider adding a counter or forcing a break if stall persists.
 
-                    # Check for terminal conditions *after* processing turn as well,
-                    # because AI functions or P0 simulation might call score_round()
-                    # which can change game_phase.
+                    # Re-check terminal conditions after action, as game/round might end.
                     current_phase_after_action = game_data["game_phase"]
-                    if current_phase_after_action == "game_over":
-                        game_over_flag = True
-                        # break # Will be caught by outer loop's while condition or next iteration's check
-                    if current_phase_after_action == "round_over":
-                        round_over_flag = True
-                        # break # Will be caught by outer loop's while condition or next iteration's check
+                    if current_phase_after_action == "game_over": game_over_flag = True
+                    if current_phase_after_action == "round_over": round_over_flag = True
 
             logging.info(f"--- Training Game {game_num} ended. Scores: {game_data['scores']} ---")
-            # Removed periodic save_q_table calls as DB is updated continuously.
-            # if game_num % save_interval == 0:
-            #     for agent_id, agent in rl_agents.items():
-            #         pass # agent.save_q_table() removed
+            # Q-table saving is now continuous with SQLite, so no periodic save needed here.
 
-        # Final save is also not needed as DB is always up-to-date.
-        # for agent_id, agent in rl_agents.items():
-        #     pass # agent.save_q_table() removed
         logging.info(f"Training simulation finished for {num_games_to_simulate} games. Q-values are stored in {Q_TABLE_DB_FILE}.")
 
     # Example of how to run it (e.g. for 10 iterations as requested for testing)
@@ -2170,7 +2364,10 @@ if __name__ == "__main__":
 
 def migrate_json_to_sqlite(json_file_path="q_table.json", db_file_path=None):
     """
-    Migrates data from an old JSON Q-table file to the SQLite database.
+    Migrates Q-table data from an old JSON file format to the SQLite database.
+    This is a utility function to be run once if transitioning from a JSON-based
+    Q-table storage to SQLite. It reads key-value pairs from the JSON file
+    and inserts them into the `q_values` table in the SQLite database.
     """
     if db_file_path is None:
         db_file_path = Q_TABLE_DB_FILE # Use the global constant
