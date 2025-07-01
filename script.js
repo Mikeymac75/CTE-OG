@@ -561,36 +561,48 @@ document.addEventListener('DOMContentLoaded', () => {
      * Handles potential connection errors.
      */
     async function handleStartGameButtonClick() {
+        console.log("handleStartGameButtonClick called"); // DEBUG
         try {
             let currentPhase = clientGameState ? clientGameState.game_phase : null;
+            console.log("Current client game phase:", currentPhase); // DEBUG
             let data;
 
             // If game is over, or round is over, or not yet started (null phase),
             // first ensure server is in 'setup' state.
             if (currentPhase === "game_over" || currentPhase === "round_over" || currentPhase === null || currentPhase === "setup") {
+                console.log("Condition met, attempting to call /api/start_game"); // DEBUG
                 // Call /api/start_game to ensure server is reset to 'setup' if needed
                 // This also handles the first click when the game is in 'setup'
                 const resetResponse = await fetch('/api/start_game');
+                console.log("/api/start_game response status:", resetResponse.status); // DEBUG
                 if (!resetResponse.ok) {
                     const errData = await resetResponse.json().catch(() => ({ error: `HTTP error ${resetResponse.status}` }));
+                    console.error("/api/start_game error data:", errData); // DEBUG
                     throw new Error(errData.error || `Failed to reset game to setup: ${resetResponse.status}`);
                 }
                 data = await resetResponse.json();
+                console.log("/api/start_game response data:", data); // DEBUG
                 renderBoard(data); // Render the "setup" state
 
                 // If after this call, the phase is "setup", it means we are ready to deal the new round.
                 // If it was already "setup", this click means "now deal".
                 if (data.game_phase === "setup") {
+                    console.log("Game phase is 'setup', attempting to call /api/deal_new_round"); // DEBUG
                     const dealResponse = await fetch('/api/deal_new_round');
+                    console.log("/api/deal_new_round response status:", dealResponse.status); // DEBUG
                     if (!dealResponse.ok) {
                         const errDataDeal = await dealResponse.json().catch(() => ({ error: `HTTP error ${dealResponse.status}` }));
+                        console.error("/api/deal_new_round error data:", errDataDeal); // DEBUG
                         throw new Error(errDataDeal.error || `Failed to deal new round: ${dealResponse.status}`);
                     }
                     data = await dealResponse.json();
+                    console.log("/api/deal_new_round response data:", data); // DEBUG
                     renderBoard(data); // Render the state after dealing (e.g., bidding_round_1)
                 }
                 // If /api/start_game somehow didn't return "setup" (e.g. server error, unexpected state),
                 // the renderBoard(data) above would have shown that. The next click might try again.
+            } else {
+                console.log("Condition for calling /api/start_game not met. Current phase:", currentPhase); // DEBUG
             }
             // Note: If the game was in an active state not covered above (e.g. bidding),
             // and the start button was somehow visible, this logic implies the first click
