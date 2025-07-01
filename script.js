@@ -15,7 +15,7 @@ document.addEventListener('DOMContentLoaded', () => {
     const player0YouHandTricksSpan = document.getElementById('player-0-you-hand-tricks');
     const player1AiHandTricksSpan = document.getElementById('player-1-ai-hand-tricks');
     const player2AiHandTricksSpan = document.getElementById('player-2-ai-hand-tricks');
-    const dummyHandDisplaySpan = document.getElementById('dummy-hand-display'); // Changed from kitty
+    // const dummyHandDisplaySpan = document.getElementById('dummy-hand-display'); // Changed from kitty - REMOVED DUPLICATE
     const trickAreaDiv = document.getElementById('trick-area'); // Added for current trick
 
     const orderUpButton = document.getElementById('order-up-button');
