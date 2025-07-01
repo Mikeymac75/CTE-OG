@@ -1395,17 +1395,11 @@ def scripts_route(): return send_from_directory('.', 'script.js')
 @app.route('/api/start_game', methods=['GET'])
 def start_game_api():
     """
-    API endpoint to start a new game or a new round within an existing game.
-    If the game is over or in setup, it initializes global game data.
-    It then sets the dealer for the new round and initializes the round data
-    (dealing cards, setting up-card, etc.).
-    If the first player to bid is an AI, it triggers the AI's bidding process.
+    API endpoint to start a new game or a new round.
+    If the game is over or not yet started (setup), it initializes the game data.
+    Then, it advances the dealer, deals cards for a new round, and sets the phase
+    to bidding_round_1. If the first player to bid is an AI, it triggers their action.
     Returns the full game state as JSON.
-    API endpoint to ensure the game is in a 'setup' state.
-    If the game is 'game_over' or not yet initialized (None), it resets the game
-    to the 'setup' phase by calling initialize_game_data().
-    It then returns the game state, which should be in 'setup'.
-    This endpoint does NOT automatically start a new round or deal cards.
     """
     game = get_game_instance()
     current_game_data = game.game_data
@@ -1413,70 +1407,44 @@ def start_game_api():
 
     logging.info(f"/api/start_game called. Current phase: {current_phase}")
 
-    if current_phase is None or current_phase == "game_over":
-        logging.info(f"Phase is '{current_phase}'. Initializing game data to 'setup' phase.")
-        initialize_game_data() # This resets the game to "setup"
-        # After initialize_game_data(), game_data is fresh, so fetch it again.
-        current_game_data = get_game_instance().game_data
-        logging.info(f"Game reset. New phase: {current_game_data.get('game_phase')}, Message: {current_game_data.get('message')}")
-    elif current_phase == "setup":
-        logging.info("Game is already in 'setup' phase. No action needed.")
+    # If game is over, or in setup (e.g. first time or after a game ended),
+    # re-initialize the entire game structure (scores to 0, random dealer).
+    if current_phase is None or current_phase == "game_over" or current_phase == "setup":
+        logging.info(f"Phase is '{current_phase}'. Initializing fresh game data (scores, dealer, etc.).")
+        initialize_game_data() # Resets scores, sets a random dealer, phase to "setup"
+        current_game_data = get_game_instance().game_data # Fetch fresh data
     else:
-        # If the game is in an active phase (e.g., bidding, playing),
-        # calling /api/start_game could be interpreted as a desire to reset.
-        # For now, let's assume if it's an active game, we reset it.
-        # Alternatively, one might return an error or the current active state.
-        # Based on the plan, resetting to "setup" is the desired behavior if not already "setup" or "game_over".
-        logging.info(f"Game is in active phase '{current_phase}'. Resetting to 'setup'.")
-        initialize_game_data()
-        current_game_data = get_game_instance().game_data
-        logging.info(f"Game reset from active phase. New phase: {current_game_data.get('game_phase')}, Message: {current_game_data.get('message')}")
+        # If a round was just over, or an active game is being reset by this call,
+        # advance the dealer from the previous round's dealer.
+        current_game_data["dealer"] = (current_game_data.get("dealer", -1) + 1) % current_game_data.get("num_players", 3)
+        logging.info(f"Advancing dealer for new round. New dealer: P{current_game_data['dealer']}.")
 
-    # Ensure the message reflects the "setup" state if we just initialized
-    if current_game_data.get("game_phase") == "setup":
-        current_game_data["message"] = "Welcome! Click 'Start New Game / Round' to deal cards and begin."
-
-    return jsonify(game_data_to_json(current_game_data))
-
-@app.route('/api/deal_new_round', methods=['GET'])
-def deal_new_round_api():
-    """
-    API endpoint to explicitly deal cards for a new round and start bidding.
-    This should ideally be called when the game is in the 'setup' phase,
-    but it will advance the dealer and start a new round regardless.
-    """
-    game = get_game_instance()
-    current_game_data = game.game_data
-    current_phase = current_game_data.get("game_phase")
-
-    logging.info(f"/api/deal_new_round called. Current phase: {current_phase}")
-
-    # Advance dealer if not starting from a fresh "setup" (e.g. clicking "deal next round" after a round finished)
-    # initialize_game_data() sets a random dealer. initialize_new_round() uses current dealer.
-    # So, if current phase is 'round_over' or an active game phase, advance dealer.
-    # If it's 'setup' (from /api/start_game) or 'game_over' (which /api/start_game would reset),
-    # the dealer set by initialize_game_data (random) or by the previous round's end should be used by initialize_new_round.
-    if current_phase not in ["setup", "game_over", None]:
-         current_game_data["dealer"] = (current_game_data.get("dealer", -1) + 1) % current_game_data.get("num_players", 3)
-         logging.info(f"Dealer advanced to {current_game_data['dealer']} before starting new round from phase {current_phase}.")
-
-
-    initialize_new_round() # Deals cards, sets phase to "bidding_round_1", etc.
-
-    # Refresh current_game_data as initialize_new_round modifies it
-    current_game_data = get_game_instance().game_data
+    # Initialize a new round (deal cards, set up-card, set phase to bidding_round_1)
+    initialize_new_round()
+    current_game_data = get_game_instance().game_data # Fetch fresh data again after round init
 
     # If the first player to bid is an AI, process their bid.
     if current_game_data.get("game_phase") == "bidding_round_1" and \
        current_game_data.get("current_player_turn") != 0 and \
        current_game_data.get("current_player_turn") is not None:
-        logging.info(f"Dealing new round: P{current_game_data['current_player_turn']} (AI) to start bidding_round_1.")
+        logging.info(f"/api/start_game: P{current_game_data['current_player_turn']} (AI) to start bidding_round_1.")
         process_ai_bid_action({
             'player_index': current_game_data["current_player_turn"],
             'action': 'ai_bidding_round_1'
         })
 
     return jsonify(game_data_to_json(current_game_data))
+
+# Deprecated: /api/deal_new_round
+# @app.route('/api/deal_new_round', methods=['GET'])
+# def deal_new_round_api():
+#     """
+#     DEPRECATED: This endpoint is no longer used. /api/start_game now handles dealing.
+#     """
+#     logging.warning("/api/deal_new_round DEPRECATED endpoint called.")
+#     # Optionally, redirect or return an error, or for now, just behave like start_game
+#     return start_game_api()
+
 
 @app.route('/api/submit_action', methods=['POST'])
 def submit_action_api():
@@ -2423,10 +2391,7 @@ if __name__ == "__main__":
     app.run(debug=True, host='0.0.0.0')
 
     # To run the training simulation:
-    # run_training_simulation(10, save_interval=5)
+    # run_training_simulation(10000) # Example of running training
 
     # To migrate existing q_table.json to SQLite (run once, if needed):
     # migrate_json_to_sqlite()
-
-    # If all above are commented out, uncomment the 'pass' statement below
-    # pass

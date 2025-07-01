@@ -1,9 +1,10 @@
 import unittest
 from euchre import (
     Card, get_hand_features, SUITS, RANKS, get_left_bower_suit,
-    get_rl_state, initialize_new_round, initialize_game_data, game_data as euchre_game_data,
+    get_rl_state, initialize_new_round, initialize_game_data, get_game_instance, # Removed game_data import, added get_game_instance
     get_effective_suit, get_card_value, # get_player_role is also used by get_rl_state
-    get_player_role, evaluate_potential_trump_strength
+    get_player_role, evaluate_potential_trump_strength,
+    RLAgent # Import RLAgent for TestAISloughingLogic
 )
 
 
@@ -188,20 +189,24 @@ class TestCardTracking(unittest.TestCase):
 
     def setUp(self):
         """Set up a basic game_data structure for testing get_rl_state with played cards."""
-        self.game_data = {
-            "hands": {0: [], 1: [], 2: []}, # Player hands
+        initialize_game_data() # Ensures a fresh _current_game_instance
+        self.game_instance = get_game_instance()
+        self.game_data = self.game_instance.game_data
+        # Default setup for these tests, individual tests can override
+        self.game_data.update({
+            "hands": {0: [], 1: [], 2: []},
             "trump_suit": None,
             "played_cards_this_round": [],
-            "original_up_card_for_round": None, # Important for bidding state features
+            "original_up_card_for_round": None,
             "dealer": 0,
             "maker": None,
             "scores": {0:0, 1:0, 2:0},
             "round_tricks_won": {0:0, 1:0, 2:0},
             "passes_on_upcard": [],
             "passes_on_calling": [],
-            "num_players": 3, # Assuming 3 players for these tests
-             "player_identities": {0: "P0", 1: "P1", 2: "P2"} # For get_player_role
-        }
+            "num_players": 3,
+            "player_identities": {0: "P0", 1: "P1", 2: "P2"}
+        })
 
     def test_no_cards_played_in_state(self):
         # No trump set yet
@@ -279,57 +284,18 @@ class TestCardTracking(unittest.TestCase):
         self.game_data["num_players"] = 3
         self.game_data["player_identities"] = {0:"P0",1:"P1",2:"P2"}
 
-        # Call initialize_new_round (need to mock/provide its dependencies if any not in self.game_data)
-        # For this test, we only care that "played_cards_this_round" is reset.
-        # We can manually set the things initialize_new_round would set for this test's purpose.
-        # For a more robust test of initialize_new_round itself, it would be separate.
+        # Call initialize_new_round (which uses get_game_instance internally)
+        # The self.game_data should be the one from the current instance
+        self.game_data["played_cards_this_round"] = [self.c('HA'), self.c('SK')] # Pre-populate for test
 
-        # Simplified: directly check the effect of adding the line to initialize_new_round
-        # by having initialize_new_round in the actual euchre.py
-        import euchre # Import full module to access its initialize_new_round
-        euchre.game_data = self.game_data # Temporarily point euchre's game_data to our test version
+        # Ensure initialize_new_round has enough context if it relies on more than just dealer and num_players
+        # from the global game_data structure. Typically, it should operate on the current game instance.
+        # For this test, the important part is that initialize_new_round is called on the
+        # correct game instance, which should be managed by get_game_instance().
+        initialize_new_round() # This should reset played_cards_this_round on the current game instance
 
-        # To make initialize_new_round runnable, ensure necessary keys exist from a fresh game_data
-        fresh_game_data_template = {
-            "deck": [], "hands": {p: [] for p in range(3)}, "dummy_hand": [],
-            "scores": {p: 0 for p in range(3)}, "dealer": 0,
-            "rl_training_data": {},
-            "trump_suit": None, "up_card": None, "up_card_visible": False,
-            "current_player_turn": -1, "maker": None, "going_alone": False,
-            "trick_cards": [], "current_trick_lead_suit": None,
-            "trick_leader": -1, "round_tricks_won": {p: 0 for p in range(3)},
-            "game_phase": "setup",
-            "message": "Welcome! Click 'Start New Round'.",
-            "player_identities": {0: "P0", 1: "P1", 2: "P2"},
-            "num_players": 3,
-            "passes_on_upcard": [], "passes_on_calling": [],
-            "cards_to_discard_count": 0,
-            "original_up_card_for_round": None, # Will be set by initialize_new_round
-            "last_completed_trick": None,
-            "played_cards_this_round": [self.c('HA'), self.c('SK')] # Pre-populate for test
-        }
-        euchre.game_data.update(fresh_game_data_template) # Ensure all keys needed by init_new_round are there
-
-        euchre.initialize_new_round() # This should reset played_cards_this_round
-
-        self.assertEqual(euchre.game_data["played_cards_this_round"], [])
-
-        # Restore global game_data if it was altered by other tests or parts of euchre.py
-        # For isolated unit tests, this is less of a concern, but good practice if sharing state.
-        # However, RLAgent and other parts of euchre.py use a global `game_data`.
-        # This kind of test can be tricky.
-        # A better way would be to have initialize_new_round accept game_data as a param.
-        # For now, this test assumes initialize_new_round correctly uses its global.
-        # Re-initialize global game_data to avoid side effects after this test.
-
-        # euchre.initialize_game_data() # This resets the global game_data in euchre.py
-        # Let individual test methods handle game_data setup / teardown if they modify globals.
-        # For this specific test, it's okay as it's checking a reset behavior.
-        # However, to be fully safe, if euchre.initialize_game_data() has side effects beyond
-        # what's being tested, it might be better to mock it or manage state more carefully.
-        # For now, assuming the test's purpose is served.
-        # To ensure test isolation for other tests that might rely on a fresh global state:
-        euchre.initialize_game_data()
+        self.assertEqual(self.game_data["played_cards_this_round"], [])
+        # No need to manually reset euchre.initialize_game_data() if setUp does it.
 
 
 class TestAISloughingLogic(unittest.TestCase):
@@ -337,163 +303,158 @@ class TestAISloughingLogic(unittest.TestCase):
         return Card(suit_rank_str[0], suit_rank_str[1:])
 
     def setUp(self):
-        # Basic setup, individual tests will customize this.
-        # Store the original rl_agents and game_data to restore them later
-        self.original_rl_agents = euchre.rl_agents.copy()
-        self.original_game_data = euchre.game_data.copy()
+        initialize_game_data()
+        self.game_instance = get_game_instance()
+        self.game_data = self.game_instance.game_data
+        self.rl_agents = self.game_instance.rl_agents # Access agents from the instance
 
-        euchre.initialize_game_data() # Start with a fresh global game_data for each test
-        euchre.game_data["num_players"] = 3
-        euchre.game_data["player_identities"] = {0: "P0", 1: "P1 (AI)", 2: "P2 (Human)"}
-        euchre.game_data["dealer"] = 0
-        euchre.game_data["scores"] = {0:0, 1:0, 2:0}
-        euchre.game_data["round_tricks_won"] = {0:0, 1:0, 2:0}
-        euchre.rl_agents = {} # Ensure no RL agents are active unless specified by a test
+        self.game_data["num_players"] = 3
+        self.game_data["player_identities"] = {0: "P0", 1: "P1 (AI)", 2: "P2 (Human)"}
+        self.game_data["dealer"] = 0
+        self.game_data["scores"] = {0:0, 1:0, 2:0}
+        self.game_data["round_tricks_won"] = {0:0, 1:0, 2:0}
+        # Clear any default agents and let tests set them up if needed
+        self.game_instance.rl_agents.clear()
+
 
     def tearDown(self):
-        # Restore original state
-        euchre.rl_agents = self.original_rl_agents
-        euchre.game_data = self.original_game_data
-        # Re-initialize to be absolutely sure for subsequent non-class tests
-        euchre.initialize_game_data()
+        # initialize_game_data() in setUp of the next test will handle fresh state.
+        pass
 
 
     def test_heuristic_ai_sloughs_lowest_card(self):
         ai_player_idx = 1
-        euchre.game_data["hands"][ai_player_idx] = [self.c('CA'), self.c('C9'), self.c('SK')] # Ace Clubs, 9 Clubs, King Spades
-        euchre.game_data["trump_suit"] = 'H' # Hearts trump
-        euchre.game_data["current_trick_lead_suit"] = 'D' # Diamonds led
-        euchre.game_data["trick_cards"] = [{'player': 2, 'card': self.c('DQ')}] # P2 led Queen of Diamonds
-        euchre.game_data["game_phase"] = "playing_tricks"
-        euchre.game_data["current_player_turn"] = ai_player_idx
-        euchre.rl_agents = {} # Ensure heuristic fallback is used
+        self.game_data["hands"][ai_player_idx] = [self.c('CA'), self.c('C9'), self.c('SK')]
+        self.game_data["trump_suit"] = 'H'
+        self.game_data["current_trick_lead_suit"] = 'D'
+        self.game_data["trick_cards"] = [{'player': 2, 'card': self.c('DQ')}]
+        self.game_data["game_phase"] = "playing_tricks"
+        self.game_data["current_player_turn"] = ai_player_idx
+        # No RL agent for this player, so it uses heuristic
+        self.game_instance.rl_agents.pop(ai_player_idx, None)
 
+        # Call as a module function, not a method of game_instance
+        # initialize_new_round() was causing the hand to be reset after test setup.
+        import euchre
         euchre.process_ai_play_card(ai_player_idx)
 
-        # AI should have played C9 (9 of Clubs)
-        self.assertEqual(len(euchre.game_data["hands"][ai_player_idx]), 2) # Hand size reduced by 1
-        played_card_in_trick = euchre.game_data["trick_cards"][-1]['card']
+        self.assertEqual(len(self.game_data["hands"][ai_player_idx]), 2)
+        played_card_in_trick = self.game_data["trick_cards"][-1]['card']
         self.assertEqual(played_card_in_trick.suit, 'C')
         self.assertEqual(played_card_in_trick.rank, '9')
 
     def test_heuristic_ai_must_follow_suit_plays_high(self):
         ai_player_idx = 1
-        euchre.game_data["hands"][ai_player_idx] = [self.c('DA'), self.c('D9'), self.c('SK')]
-        euchre.game_data["trump_suit"] = 'H'
-        euchre.game_data["current_trick_lead_suit"] = 'D' # Diamonds led
-        euchre.game_data["trick_cards"] = [] # AI leads or follows first card
-        euchre.game_data["game_phase"] = "playing_tricks"
-        euchre.game_data["current_player_turn"] = ai_player_idx
-        euchre.rl_agents = {}
+        self.game_data["hands"][ai_player_idx] = [self.c('DA'), self.c('D9'), self.c('SK')]
+        self.game_data["trump_suit"] = 'H'
+        self.game_data["current_trick_lead_suit"] = 'D'
+        self.game_data["trick_cards"] = []
+        self.game_data["game_phase"] = "playing_tricks"
+        self.game_data["current_player_turn"] = ai_player_idx
+        self.game_instance.rl_agents.pop(ai_player_idx, None)
 
+        import euchre
         euchre.process_ai_play_card(ai_player_idx)
 
-        played_card_in_trick = euchre.game_data["trick_cards"][-1]['card']
+        played_card_in_trick = self.game_data["trick_cards"][-1]['card']
         self.assertEqual(played_card_in_trick.suit, 'D')
-        self.assertEqual(played_card_in_trick.rank, 'A') # Should play Ace of Diamonds
+        self.assertEqual(played_card_in_trick.rank, 'A')
 
     def test_heuristic_ai_can_trump_to_win(self):
         ai_player_idx = 1
-        euchre.game_data["hands"][ai_player_idx] = [self.c('H9'), self.c('CA'), self.c('C9')] # 9H is trump
-        euchre.game_data["trump_suit"] = 'H'
-        euchre.game_data["current_trick_lead_suit"] = 'D' # Diamonds led
-        euchre.game_data["trick_cards"] = [{'player': 2, 'card': self.c('DK')}] # P2 led King of Diamonds
-        euchre.game_data["game_phase"] = "playing_tricks"
-        euchre.game_data["current_player_turn"] = ai_player_idx
-        euchre.rl_agents = {}
+        self.game_data["hands"][ai_player_idx] = [self.c('H9'), self.c('CA'), self.c('C9')]
+        self.game_data["trump_suit"] = 'H'
+        self.game_data["current_trick_lead_suit"] = 'D'
+        self.game_data["trick_cards"] = [{'player': 2, 'card': self.c('DK')}]
+        self.game_data["game_phase"] = "playing_tricks"
+        self.game_data["current_player_turn"] = ai_player_idx
+        self.game_instance.rl_agents.pop(ai_player_idx, None)
 
+        import euchre
         euchre.process_ai_play_card(ai_player_idx)
 
-        played_card_in_trick = euchre.game_data["trick_cards"][-1]['card']
+        played_card_in_trick = self.game_data["trick_cards"][-1]['card']
         self.assertEqual(played_card_in_trick.suit, 'H')
-        self.assertEqual(played_card_in_trick.rank, '9') # Should trump with 9H
+        self.assertEqual(played_card_in_trick.rank, '9')
 
     def test_rl_agent_overlay_corrects_bad_slough(self):
         ai_player_idx = 1
-        # Mock RLAgent and its choose_action method
-        class MockRLAgent:
-            def __init__(self, player_id): self.player_id = player_id
+        class MockRLAgent(RLAgent): # Inherit from RLAgent
             def choose_action(self, state_dict, valid_actions):
-                # Simulate RL agent choosing the Ace of Clubs (bad slough)
-                for action in valid_actions: # valid_actions are dicts
+                for action in valid_actions:
                     if action['suit'] == 'C' and action['rank'] == 'A':
                         return action
-                return valid_actions[0] # Fallback, should not be reached if AC is valid
-            def _serialize_action(self, action): return f"card_{action['suit']}{action['rank']}"
+                return valid_actions[0]
 
-        euchre.rl_agents = {ai_player_idx: MockRLAgent(player_id=ai_player_idx)}
+        self.game_instance.rl_agents[ai_player_idx] = MockRLAgent(player_id=ai_player_idx)
 
-        euchre.game_data["hands"][ai_player_idx] = [self.c('CA'), self.c('C9'), self.c('SK')]
-        euchre.game_data["trump_suit"] = 'H'
-        euchre.game_data["current_trick_lead_suit"] = 'D'
-        euchre.game_data["trick_cards"] = [{'player': 2, 'card': self.c('DQ')}] # P2 led Queen of Diamonds
-        euchre.game_data["game_phase"] = "playing_tricks"
-        euchre.game_data["current_player_turn"] = ai_player_idx
-        euchre.game_data["rl_training_data"] = {ai_player_idx: {}} # Init training data
+        self.game_data["hands"][ai_player_idx] = [self.c('CA'), self.c('C9'), self.c('SK')]
+        self.game_data["trump_suit"] = 'H'
+        self.game_data["current_trick_lead_suit"] = 'D'
+        self.game_data["trick_cards"] = [{'player': 2, 'card': self.c('DQ')}]
+        self.game_data["game_phase"] = "playing_tricks"
+        self.game_data["current_player_turn"] = ai_player_idx
+        self.game_data["rl_training_data"] = {ai_player_idx: {}}
 
+        import euchre
         euchre.process_ai_play_card(ai_player_idx)
 
-        played_card_in_trick = euchre.game_data["trick_cards"][-1]['card']
+        played_card_in_trick = self.game_data["trick_cards"][-1]['card']
         self.assertEqual(played_card_in_trick.suit, 'C')
-        self.assertEqual(played_card_in_trick.rank, '9') # Overlay should correct to C9
+        self.assertEqual(played_card_in_trick.rank, '9')
 
     def test_rl_agent_overlay_allows_correct_slough(self):
         ai_player_idx = 1
-        class MockRLAgent:
-            def __init__(self, player_id): self.player_id = player_id
+        class MockRLAgent(RLAgent):
             def choose_action(self, state_dict, valid_actions):
-                # Simulate RL agent choosing the 9 of Clubs (correct slough)
                 for action in valid_actions:
                     if action['suit'] == 'C' and action['rank'] == '9':
                         return action
                 return valid_actions[0]
-            def _serialize_action(self, action): return f"card_{action['suit']}{action['rank']}"
 
-        euchre.rl_agents = {ai_player_idx: MockRLAgent(player_id=ai_player_idx)}
+        self.game_instance.rl_agents[ai_player_idx] = MockRLAgent(player_id=ai_player_idx)
 
-        euchre.game_data["hands"][ai_player_idx] = [self.c('CA'), self.c('C9'), self.c('SK')]
-        euchre.game_data["trump_suit"] = 'H'
-        euchre.game_data["current_trick_lead_suit"] = 'D'
-        euchre.game_data["trick_cards"] = [{'player': 2, 'card': self.c('DQ')}]
-        euchre.game_data["game_phase"] = "playing_tricks"
-        euchre.game_data["current_player_turn"] = ai_player_idx
-        euchre.game_data["rl_training_data"] = {ai_player_idx: {}}
+        self.game_data["hands"][ai_player_idx] = [self.c('CA'), self.c('C9'), self.c('SK')]
+        self.game_data["trump_suit"] = 'H'
+        self.game_data["current_trick_lead_suit"] = 'D'
+        self.game_data["trick_cards"] = [{'player': 2, 'card': self.c('DQ')}]
+        self.game_data["game_phase"] = "playing_tricks"
+        self.game_data["current_player_turn"] = ai_player_idx
+        self.game_data["rl_training_data"] = {ai_player_idx: {}}
 
+        import euchre
         euchre.process_ai_play_card(ai_player_idx)
 
-        played_card_in_trick = euchre.game_data["trick_cards"][-1]['card']
+        played_card_in_trick = self.game_data["trick_cards"][-1]['card']
         self.assertEqual(played_card_in_trick.suit, 'C')
-        self.assertEqual(played_card_in_trick.rank, '9') # Should remain C9
+        self.assertEqual(played_card_in_trick.rank, '9')
 
     def test_rl_agent_overlay_allows_trump_play(self):
         ai_player_idx = 1
-        # Card objects for hand
-        H9 = self.c('H9') # Trump
+        H9 = self.c('H9')
         CA = self.c('CA')
         C9 = self.c('C9')
 
-        class MockRLAgent:
-            def __init__(self, player_id): self.player_id = player_id
+        class MockRLAgent(RLAgent):
             def choose_action(self, state_dict, valid_actions):
-                # Simulate RL agent choosing to trump with H9
-                for action in valid_actions: # valid_actions are dicts
+                for action in valid_actions:
                     if action['suit'] == 'H' and action['rank'] == '9':
                         return action
-                return valid_actions[0] # Fallback
-            def _serialize_action(self, action): return f"card_{action['suit']}{action['rank']}"
+                return valid_actions[0]
 
-        euchre.rl_agents = {ai_player_idx: MockRLAgent(player_id=ai_player_idx)}
+        self.game_instance.rl_agents[ai_player_idx] = MockRLAgent(player_id=ai_player_idx)
 
-        euchre.game_data["hands"][ai_player_idx] = [H9, CA, C9]
-        euchre.game_data["trump_suit"] = 'H'
-        euchre.game_data["current_trick_lead_suit"] = 'D' # Diamonds led
-        euchre.game_data["trick_cards"] = [{'player': 2, 'card': self.c('DK')}] # P2 led King of Diamonds
-        euchre.game_data["game_phase"] = "playing_tricks"
-        euchre.game_data["current_player_turn"] = ai_player_idx
-        euchre.game_data["rl_training_data"] = {ai_player_idx: {}}
+        self.game_data["hands"][ai_player_idx] = [H9, CA, C9]
+        self.game_data["trump_suit"] = 'H'
+        self.game_data["current_trick_lead_suit"] = 'D'
+        self.game_data["trick_cards"] = [{'player': 2, 'card': self.c('DK')}]
+        self.game_data["game_phase"] = "playing_tricks"
+        self.game_data["current_player_turn"] = ai_player_idx
+        self.game_data["rl_training_data"] = {ai_player_idx: {}}
 
+        import euchre
         euchre.process_ai_play_card(ai_player_idx)
 
-        played_card_in_trick = euchre.game_data["trick_cards"][-1]['card']
+        played_card_in_trick = self.game_data["trick_cards"][-1]['card']
         self.assertEqual(played_card_in_trick.suit, 'H')
-        self.assertEqual(played_card_in_trick.rank, '9') # Should play H9, not overridden
+        self.assertEqual(played_card_in_trick.rank, '9')
